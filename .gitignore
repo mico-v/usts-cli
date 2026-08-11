@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.log
+.session.json
+_login_page.html
+captures/

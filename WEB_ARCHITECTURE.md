@@ -1,0 +1,146 @@
+# 教务系统网页架构探索记录 (WEB_ARCHITECTURE.md)
+
+> 记录对苏州科技大学正方教务系统（`jwgl.usts.edu.cn/jwglxt`，V-9.0）的网页结构探索结果。
+> 这是**外部系统**的架构备忘，供实现 CLI 功能时参考。标注「已实测」的为通过无会话请求验证；
+> 标注「待实测」的为基于正方标准实现的推测，需在登录后用真实账号验证。
+
+## 1. 登录流程（已实测）
+
+> ⚠️ 2026-08 更新：学校已启用 **CAS 统一身份认证**。`login_slogin.html` 仍是经典正方页（不再 302），但登录已迁移到 `sso.usts.edu.cn`（Angular 表单）。旧的正方 RSA 纯脚本登录已失效并移除，登录必须走浏览器导航到 CAS（见 §7.1）。以下 §1 旧流程仅作历史参考。
+
+1. **取登录页**：`GET /xtgl/login_slogin.html`
+   - 页面含隐藏域 `csrftoken`，值形如 `uuid,uuid去横线`（每次访问重新生成，登录 POST 必须原样带回）。
+   - 隐藏域 `mmsfjm=1` 表示**密码需要加密**；`yzcskz=3` 表示登录失败 3 次后弹出图形验证码（`/kaptcha`）。
+   - 表单字段：`yhm`(学号)、`mm`(密码)、`language=zh_CN`。
+2. **取 RSA 公钥**：`GET /xtgl/login_getPublicKey.html` → JSON `{ "modulus": "<base64>", "exponent": "<base64>" }`（已实测返回有效密钥）。
+3. **加密密码**：用公钥做 RSA（PKCS#1 v1.5）加密密码，结果 base64。Node 可用内置 `crypto`：`publicEncrypt({ key, padding: RSA_PKCS1_PADDING }, Buffer.from(pwd))` 再 base64，无需第三方库。
+4. **提交登录**：`POST /xtgl/login_slogin.html?time=<毫秒时间戳>`，form 字段（浏览器实际提交，已抓包确认）：
+   - `csrftoken`（登录页隐藏域原值，形如 `uuid,uuid去横线`）
+   - `language=zh_CN`
+   - `ydType=`（空）
+   - `yhm`(学号)、`mm`(加密后，**提交两次**，对应可见框与隐藏框)
+   - 请求头需带 `Origin: https://jwgl.usts.edu.cn`、`Referer` 为登录页。
+   - ⚠️ 纯脚本按此提交仍会被 WAF 应用层拒绝（见 4.2），**必须用浏览器引擎（Puppeteer）执行**才能完成登录。
+5. **成功标志**：302 跳转到 `index_initMenu.html`，服务端写入会话 Cookie（JSESSIONID、`__jsluid_s` 等）。后续所有请求必须携带该会话 Cookie。
+6. **注意**：未登录访问任何功能页都会被 `302` 重定向到 `login_slogin.html`（观测到重定向目标为 `http://...`，实际请求仍建议用 `https` 并复用会话 Cookie）。
+
+## 2. 已确认存在的功能模块（已实测：未登录均 302→登录页，或 200 错误页）
+
+| 模块 | 视图路径 | 备注 |
+|------|----------|------|
+| 主菜单/首页 | `/xtgl/index_initMenu.html` | 302→登录页 |
+| 个人信息 | `/xsxxxggl/xsxxwh_cxXsxx.html` | 未登录返回「错误提示」独立页（200），需登录 |
+| 成绩查询 | `/cjcx/cjcx_cxDgXscj.html` | 302→登录页 |
+| 成绩查询(个人) | `/cjcx/cjcx_cxXsgrcj.html` | 302→登录页 |
+| 课表查询 | `/kbcx/xskbcx_cxXsKb.html` | 302→登录页 |
+| 考试查询 | `/kwgl/kscx_cxXsks.html`、`/ksgl/kscx_cxXsks.html` | 两个路径均存在，需确认哪个为当前启用 |
+| 教学评价 | `/jxpj/cxjxpj_cxXsPj.html` | 302→登录页 |
+| 选课 | `/xkgl/xsxkcx_cxXsxk.html` | 302→登录页 |
+| 验证码 | `/kaptcha` | 失败 3 次后需要 |
+
+## 3. 数据接口模式（已实测 ✅）
+
+正方 V-9 数据接口统一规律（已在 live 站点逐模块验证，见 `src/lib/client.ts` 的 `postGrid`/`queryProfile`/`querySchedule`）：
+
+- **列表类（jqGrid）通用契约**：
+  - `POST` 到**业务 action 路径**，URL 带 `?doType=query&gnmkdm=<功能码>`（2026-08 实测：不传 `su`，服务端按会话识别用户）。
+  - **body 必须同时含两套分页参数**（见 §7）：经典字段 `page/rows/sidx/sord/_search/nd`（缺了会被服务端拒绝返回“错误提示”页）**以及** `queryModel.showCount / queryModel.currentPage`（服务端实际用它分页，`showCount=5000` 一次取全）。
+  - 头部需带 `Cookie`、`Referer`（视图页路径）、`Content-Type: application/x-www-form-urlencoded;charset=UTF-8`、`X-Requested-With: XMLHttpRequest`。
+  - 返回标准 JSON：`{ items: [...], totalCount: N, currentPage, totalPage }`。
+- **`gnmkdm` 模块代码（实测确认）**：
+
+  | 功能 | 视图路径 | 数据 action（POST doType=query） | gnmkdm |
+  |------|----------|-------------------------------|--------|
+  | 学生成绩 | `/cjcx/cjcx_cxDgXscj.html` | `/cjcx/cjcx_cxXsgrcj.html` | `N305005` |
+  | 考试信息 | `/kwgl/kscx_cxXsksxxIndex.html` | `/kwgl/kscx_cxXsksxxIndex.html`（2026-08 实测：action 即带 Index 的视图本身；不带 Index 会返回 status=910 空网格） | `N358105` |
+  | 选课名单 | `/xkcx/xkmdcx_cxXkmdcxIndex.html` | `/xkcx/xkmdcx_cxXkmdcxIndex.html`（2026-08 实测：带 Index） | `N255010` |
+  | 个人课表 | `/kbcx/xskbcx_cxXskbcxIndex.html` | `/kbcx/xskbcx_cxXsgrkb.html`（2026-08 实测，无需刮隐藏字段） | `N2151` |
+  | 个人信息 | `/xsxxxggl/xsgrxxwh_cxXsgrxx.html` | （GET 详情页，非 grid） | `N100801` |
+
+- **个人信息（GET 解析）**：`GET /xsxxxggl/xsgrxxwh_cxXsgrxx.html?gnmkdm=N100801&su=<学号>`，页面结构为 `<label>姓名：</label> ... <p class="form-control-static">张三</p>` 的 标签→值 配对；部分字段（学院/专业/班级）值写在 `id="col_jg_id"` / `col_zy_id` / `col_bh_id` 的 div 内，需兜底解析。
+- **个人课表**：真实数据接口为 `POST /kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151`，body 仅 `xnm/xqm/kzlx=ck/xsdm/kclbdm/kclxdm`，返回 `{xsxx, sjkList}`（2026-08 实测，无需解析 JS 渲染的网格）。网页周网格单元格为 `id="星期-节次"`；实践/MOOC 等无固定节次的课程在 sjkList 中不带 `xqj/jc`。
+- **会话依赖**：所有请求携带登录会话 Cookie + 合适 `Referer`；`xnm`(学年，如 `2025`)、`xqm`(学期 `3`=秋/`12`=春/`16`=短学期)。
+- **默认学期**：`JwglClient.currentTerm()` 按当前月份推算，与网页一致（2026-08 实测 8 月网页缺省为 `xnm=今年, xqm='3'`）：8~12 月 → `{xnm:今年, xqm:'3'}`；2~7 月 → `{xnm:去年, xqm:'12'}`；1 月 → `{xnm:去年, xqm:'3'}`。
+
+## 4. 登录实现的两大关键坑（已实测）
+
+### 4.1 RSA 公钥是「按会话绑定」的（旧纯脚本登录已移除，仅历史参考）
+服务端在**会话**里临时生成 RSA 密钥对，把私钥存于该会话，只下发公钥。因此：
+**取公钥的 GET 请求必须携带与登录 POST 同一个会话 Cookie（JSESSIONID）**，否则服务端用另一个会话的私钥解密，必然「用户名或密码不正确」。
+（Node 的 axios 不会自动管理 Cookie，必须自建 cookie jar，并在登录页 GET、公钥 GET、登录 POST、后续查询之间保持同一份 Cookie。）
+
+### 4.2 前置 WAF 会限流（连接层重置），但浏览器引擎可正常登录
+响应头会下发 `__jsluid_s` Cookie（`SameSite=None; secure`）。实测结论（已更新）：
+- **纯脚本（Node axios）登录会被应用层拒绝**：登录 POST 返回 302 跳回登录页、会话被重置。原因不是加密错误（RSA 与浏览器逐字节一致），而是 WAF 在传输层对脚本客户端的识别 → 重置会话。
+- **Puppeteer 无头浏览器能正常登录**：动态加载登录页 → 输入账号密码 → 点击登录，可成功跳到 `index_initMenu.html`。
+- **WAF 对短时间内的重复请求做限流**：连续多次登录/查询后会出现 `net::ERR_CONNECTION_CLOSED`（连接层直接重置）。**等待约 30~60 秒后重试即可恢复**，正常用户单次登录不受影响。CLI 的 `loginViaBrowser` 已对连接失败做最多 3 次重试 + 退避。
+- 因此采用「Puppeteer 浏览器登录」作为主路径，登录后把会话 Cookie 持久化到 `.session.json`，后续查询用 axios 复用该 Cookie（GET 视图页返回 200/非登录页，会话有效）。
+
+## 5. 实现注意事项
+
+- `JwglClient` 已实现：`loginViaBrowser()`（Puppeteer 导航 CAS 登录，含重试）、`restoreSession()`/`saveSession()`（`.session.json` 会话持久化）、`validateSession()`，以及 `postGrid`/`querySchedule`/`queryClassSchedule`/`getBjkbdyOptions` 等查询方法。
+- **会话校验修正**：直接 GET 视图页（如 `xsxxwh_cxXsxx.html`）即使会话有效也常返回「错误提示」页（缺 `gnmkdm`/参数），因此 `validateSession` 只以「302 重定向到登录页 / 出现『请先登录』『登录超时』 / 登录页 HTML」判定失效，不把「错误提示」当作失效。
+- 后续查询命令：登录/恢复会话后，用同一 cookie jar **POST** 到各数据 Action（见第 3 节），附 `gnmkdm` 模块参数，解析返回的 JSON。GET 视图页仅用于校验会话，不用于取数据。
+- 验证码仅在连续失败触发；WAF 限流期间暂停请求、稍后重试即可，无需处理验证码。
+
+## 6. 已实现的 CLI 查询命令（已实测 ✅）
+
+| 命令 | 调用 | 说明 |
+|------|------|------|
+| `usts scores [--xnm 2025] [--xqm 3]` | `client.queryScores()` | 学生成绩，返回科目/成绩/学分/绩点/教师等 |
+| `usts exams [--xnm] [--xqm]` | `client.queryExams()` | 考试安排，返回考试时间/地点 |
+| `usts courses [--xnm] [--xqm]` | `client.queryCourseList()` | 选课名单，返回课程/选课学生 |
+| `usts profile` | `client.queryProfile()` | 个人信息（姓名/学号/年级/学院/专业/班级/手机） |
+| `usts schedule [--xnm] [--xqm]` | `client.querySchedule()` | 个人课表（2026-08 已修复：POST `xskbcx_cxXsgrkb.html`） |
+
+- 全部为**只读**查询，风险最低；学期缺省时用 `currentTerm()` 推算。
+- `scores` 已实跑取回真实数据（10 门课）；`exams`/`courses` 接口契约已确认（该生对应学期暂为空数据，返回空网格）；`profile` 已正确解析出姓名/学号/年级/班级/手机。
+- 课表 `schedule` 因本校课表为 JS 动态加载且其 `xskbcx.js` 被 WAF 拦截，暂未能稳定抓取；后续可尝试从模块 JS 中提取真正的课表数据 Action 或解析 JS 注入的课表变量。
+
+## 7. 2026-08 抓包实测校正（用真实浏览器数据反推的契约）
+
+通过 `tools/capture-browser.mjs`（Puppeteer 可见浏览器 + 自动记录每次导航的最终渲染 DOM 与全部 XHR/fetch 请求体/响应体）抓包，实测结论：
+
+### 7.1 登录已迁移到 CAS 统一身份认证
+- 登录走 **CAS 统一身份认证**：`https://sso.usts.edu.cn/login?service=http://jwgl.usts.edu.cn/sso/jasiglogin/jwglxt`（Angular/NG-ZORRO 表单）。`login_slogin.html` 仍是经典正方页（不再 302），旧的正方 RSA 纯脚本登录已失效并移除。
+- **jwgl 与 SSO 均前置瑞数 JSLUID WAF**（`__jsluid_s` cookie），纯 axios 拿不到登录表单（返回 `#sso_redirect` JS 挑战重定向页），必须用浏览器执行 JS。
+- 字段：`input[name="username"]`、`input[type="password"]`（无 name）、隐藏 `captcha_code`（需要验证码时才出现可见输入框）、隐藏 `execution`/`_eventId`/`type`/`geolocation`。
+- 登录按钮 `button.login-button`，初始带 `disabled` class，填完表单才可点击；`execution` 令牌随会话绑定，GET 登录页与 POST 提交须保持同一 Cookie。
+- **填表单用原生 setter + input/change 事件**（`page.type` 会被 Angular 重渲染截断，实测只输入 2 字符）。
+- 出现图形验证码时无法自动处理：CLI 提示改用 `npm run capture` 人工登录，或注入 `USTS_COOKIES`。
+
+### 7.2 列表接口真实契约（scores/exams/courselist）
+- 真实 action（浏览器实际 POST）：
+  - 成绩：`POST /cjcx/cjcx_cxXsgrcj.html?doType=query&gnmkdm=N305005`
+  - 考试：`POST /kwgl/kscx_cxXsksxxIndex.html?doType=query&gnmkdm=N358105`（**带 Index**）
+  - 选课：`POST /xkcx/xkmdcx_cxXkmdcxIndex.html?doType=query&gnmkdm=N255010`（**带 Index**）
+  - 均不传 `su`，服务端按会话识别用户。
+- **分页参数的关键坑**（axios 逐项实测）：
+  - 服务端**忽略经典 `page/rows`**，实际按 `queryModel.showCount`/`queryModel.currentPage` 分页（默认 showCount=10）；只发 `page/rows` 会一直拿到第一页（数据重复）。
+  - **纯 `queryModel.*` body 用 axios 发会被拒**（返回“错误提示”页）；浏览器能发是因带完整浏览器指纹。
+  - ✅ 可行做法（已用于 `postGrid`）：**经典字段 `page/rows/sidx/sord/_search/nd` 与 `queryModel.showCount=5000&queryModel.currentPage=N` 同时发送**，一次取全且通过校验。
+- 无需旧版臆测的 `gridHidden` 隐藏字段（`jsxx=xs`、`yhm=` 等）——只发 `xnm`/`xqm` 等查询参数即可。
+
+### 7.3 个人课表真接口
+- `POST /kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151`，body：`xnm=<学年>&xqm=<学期>&kzlx=ck&xsdm=&kclbdm=&kclxdm=`
+- 响应 `{ qsxqj, xsxx:{...}, sjkList:[...] }`；`sjkList` 条目字段：`kcmc`(课程) `jsxm`(教师) `jxbzh`(教学班) `xqmc`(校区) `xf`(学分) `qsjsz`(周次) `kclb`(课程类别) `khfsmc`(考核方式) `xnmc`(学年)。有固定排课的条目才有 `xqj`(星期)/`jc`(节次，形如 `5-6`)；实践课/MOOC 无固定节次则不带。
+- 网页渲染的周网格单元格为 `<td id="星期-节次" class="td_wrap">`。
+
+### 7.4 字段映射实测
+- 成绩：教师字段是 `jsxm`；**选课名单：教师是 `jsmc`（不是 `jsxm`，旧代码取不到导致教师列空）**；考试字段因该学期无数据未验证（命令内保留防御性 `pick()`）。
+- 缺省学期：8 月网页缺省 `xnm=今年, xqm='3'`（即将到来的秋季学期），`currentTerm()` 已对齐；只给 `-y` 时学期留空 = 该学年全部学期（与网页一致）。
+
+### 7.5 抓包产物
+- `captures/*.html`：每页最终渲染 DOM；`captures/network.jsonl`：全部 XHR 请求体+响应体；`captures/summary.md`：去重接口清单。均已 gitignore（含个人真实数据）。
+
+### 7.6 班级课表（bjkbdy，N214505，2026-08 实测）
+- 视图页：`GET /kbdy/bjkbdy_cxBjkbdyIndex.html?gnmkdm=N214505`。**学院/校区/年级/培养层次等选单选项内嵌在 HTML 里**（chosen-select，`display:none`），需按 `name="jg_id"` 等定位后截取到 `</select>` 解析 `<option>`。
+- 级联下拉（GET，均带 `_=<时间戳>&gnmkdm=N214505`）：
+  - 专业：`/xtgl/comm_cxZydmList.html?jg_id=<学院>&zyh_id_cx=` → `[{zyh_id, zymc}]`
+  - 班级：`/xtgl/comm_cxBjdmList.html?jg_id=<学院>&zyh_id=<专业>&bh_id=&njdm_id=<年级>` → `[{bh_id, bh(班级编号), bj(班级名), jgmc, zymc, njmc}]`
+- 课表数据：`POST /kbdy/bjkbdy_cxBjKb.html?gnmkdm=N214505`，body 需带 `xnm/xqm/xnmc/xqmmc/xqh_id/njdm_id/zyh_id/bh_id/tjkbzdm=1/tjkbzxsdm=0/zymc/jgmc/njmc/bj/bh/kzlx=ck` 等。
+  **关键坑：`bh` 必须传班级编号（如 2520401000）且与 bh_id 对应，传班级名或留空会返回空 kbList**；`xkrs`/`zs` 等字段非必需。
+  返回 `{ kbList, sjkList, xqjmcMap, weekNum, ... }`：
+  - `kbList` 排课条目：`kcmc`(课程) `xm`(**教师，注意不是 jsxm**) `zcmc`(职称) `xqj`(星期) `xqjmc` `jcor`(节次，形如 "7-9") `cdmc`(教室) `cdlbmc`(场地类别) `zcd`(周次) `xf`(学分) `kcxzjc`(必修/选修) `jxbzc`(教学班组成) `jgh_id`(教师工号)。占位条目 `cdmc='未排地点'` 需过滤。
+  - `sjkList` 实践课：`qtkcgs`/`sjkcgs` 文本摘要。
+- CLI 命令 `usts clsched`：交互式级联（校区→年级→学院→专业→班级），或 `--jg/--zy/--bh`（id 或名称均可，名称按子串匹配）直接查询任意班级。

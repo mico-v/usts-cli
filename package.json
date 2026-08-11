@@ -1,0 +1,37 @@
+{
+  "name": "usts-cli",
+  "version": "1.0.0",
+  "description": "正方教务系统 CLI 工具",
+  "main": "dist/index.js",
+  "bin": {
+    "usts": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "capture": "node tools/capture-browser.mjs"
+  },
+  "keywords": [
+    "zhifang",
+    "jwgl",
+    "usts"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "inquirer": "^8.2.7",
+    "puppeteer": "^23.11.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^8.2.13",
+    "@types/node": "^26.1.2",
+    "axios": "^1.18.1",
+    "commander": "^15.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
