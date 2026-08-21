@@ -4,8 +4,8 @@
  * 登录策略（按优先级）：
  *   1. 已有持久化会话（.session.json）且仍有效 -> 直接复用
  *   2. 环境变量 USTS_COOKIES 提供已认证 Cookie -> 注入并校验
- *   3. 浏览器登录（导航到 CAS 统一身份认证，自动填入账号密码并点击登录）
- *   出现验证码时无法自动处理，提示改用 npm run capture 或 USTS_COOKIES。
+ *   3. 账号密码纯脚本登录（经典正方 RSA 加密 + 双 POST 重试，无需浏览器）
+ * 出现验证码时无法自动处理，提示改用 USTS_COOKIES 或 npm run capture。
  */
 import inquirer from 'inquirer';
 import { JwglClient } from '../lib/client';
@@ -61,8 +61,8 @@ export async function loginCommand(client: JwglClient): Promise<boolean> {
     password = answers.password;
   }
 
-  info('正在通过浏览器登录（CAS 统一身份认证）...');
-  const result = await client.loginViaBrowser(username!, password!);
+  info('正在通过账号密码登录（纯脚本 RSA + 双 POST 重试）...');
+  const result = await client.loginViaScript(username!, password!);
 
   if (result.success) {
     console.log(success(result.message));

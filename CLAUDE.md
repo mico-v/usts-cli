@@ -6,16 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- `npm install` — install dependencies (downloads a Chrome build for Puppeteer on first install).
+- `npm install` — install dependencies. `puppeteer*` sits in `devDependencies` (only used by the dev `npm run capture` tool), so its Chrome download can be skipped with `npm install --omit=dev` — **login does not need a browser**.
 - `npm run build` — compile TypeScript to `dist/` (`tsc`; strict mode is on — resolve type errors before committing).
 - `node dist/index.js <command>` — run the built CLI (requires a prior build). Also aliased as `npm run start`; `npm link` exposes it globally as `usts`.
-- `npm run dev -- <command>` — run via `ts-node` without compiling. For long-running commands (e.g. `login` launches a headless browser), prefer the compiled `node dist/index.js login` — ts-node invocations can be killed by tooling monitor windows.
+- `npm run dev -- <command>` — run via `ts-node` without compiling. Prefer the compiled `node dist/index.js <command>` for reliability — ts-node invocations can be killed by tooling monitor windows.
 - `node dist/index.js` (no args) — interactive menu shell (login / queries / profile). The menu also exposes 班级课表 (`clsched`).
 - First use: `usts login`, which persists a session to `.session.json`; subsequent queries reuse it.
 
 **There is no test runner or linter configured** — `package.json` has no `test`/`lint` scripts. Don't assume `npm test` works.
 
-**Dependency split gotcha**: only `inquirer` and `puppeteer*` are in `dependencies`; `axios` and `commander` (both imported at runtime by `src/`) are in `devDependencies`. A `--production` install or repackaging just `dist/` will fail at runtime with missing modules. Keep runtime imports in `dependencies`.
+**Dependency split**: `dependencies` = `axios`, `commander`, `inquirer` (all imported at runtime by `src/`); `devDependencies` = `typescript`, `ts-node`, `@types/*`, and `puppeteer*` (runtime no longer needs Puppeteer — only the dev `tools/capture-browser.mjs` does). A `--omit=dev`/`--production` install of just `dist/` runs fine. Keep runtime imports in `dependencies`.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ Three layers under `src/`:
 
 - **`lib/client.ts` — `JwglClient`, the single HTTP boundary.** Wraps an axios instance (`baseURL` = 教务系统 host, 30s timeout, `maxRedirects: 0`, `validateStatus: () => true` so it can judge login/redirects itself). Owns the session cookie jar (`Map<string,string>` + `username`/`loginTime`, types in `types/api.ts`).
 - **`commands/` — one exported async function per CLI command**, each taking a `JwglClient` and an opts object. `commands/_shared.ts` holds `ensureSession()` (restore + validate session; prints a hint and returns `false` if unusable), `resolveTerm()`, and term-label helpers. `interactive.ts` is the menu shell that reuses the same command functions.
-- **`index.ts` — the commander router** at the entry point. Registers `login`, `scores`, `exams`, `courses`, `schedule`, `profile`; `scores/exams/courses/schedule` share `-y/--xnm` and `-t/--xqm` options via `addTermOptions()`. With no args it launches `interactiveShell()`.
+- **`index.ts` — the commander router** at the entry point. Registers `login`, `scores`, `exams`, `courses`, `schedule`, `clsched`, `profile`, `gpa`, `notifications`, `academia`, `selected-courses`, `schedule-pdf`, `academia-pdf`; the term-based queries share `-y/--xnm` and `-t/--xqm` options via `addTermOptions()`. With no args it launches `interactiveShell()`.
 
 Support modules: `lib/logger.ts` (ANSI-colored output: `success`/`error`/`warning`/`info`/`header`), `lib/format.ts` (`printTable`), `lib/env.ts` (minimal dotenv-style `.env` loader, non-overriding). All output/UI text is Chinese; comments and API field names are Chinese/pinyin.
 
@@ -59,14 +59,14 @@ Schedule caveat: `sjkList` items carry `xqj`/`jc` (weekday/section) only for cou
 
 ## Session & login
 
-- `loginCommand` (in `commands/login.ts`) tries in order: existing valid `.session.json` → `USTS_COOKIES` env injection → Puppeteer browser login (`loginViaBrowser`, using `.env` creds or an `inquirer` prompt).
-- **Login goes through CAS 统一身份认证** (`sso.usts.edu.cn`, 2026-08). Both the SSO server and jwgl sit behind a 瑞数 JSLUID WAF, so pure-axios login is impossible. `loginViaBrowser` drives headless Chrome straight to the CAS URL (`https://sso.usts.edu.cn/login?service=http://<host>/sso/jasiglogin/jwglxt`), waits out the WAF challenge, fills `input[name=username]` + `input[type=password]` via **native setters** (Angular re-renders truncate `page.type`), and clicks `button.login-button` (which has a `disabled` class until the form is valid). If a visible captcha appears it cannot be solved automatically — the CLI then tells the user to use `npm run capture` (manual login that writes `.session.json`) or inject `USTS_COOKIES`.
+- `loginCommand` (in `commands/login.ts`) tries in order: existing valid `.session.json` → `USTS_COOKIES` env injection → pure-script login (`loginViaScript`, using `.env` creds or an `inquirer` prompt).
+- **Login is pure script (2026-08 verified)**: classic 正方 `login_slogin.html` RSA login, no Puppeteer/Chrome. The 瑞数 JSLUID WAF **resets the session's *first* login POST** (302 back to login + rotated JSESSIONID), so `loginViaScript` just retries the identical POST once on the same cookie jar — the second one lands on `index_initMenu.html`. It fetches the login page (parse `#csrftoken`), GETs `login_getPublicKey.html`, RSA-encrypts the password (PKCS#1 v1.5, Node `crypto`), POSTs `{csrftoken, yhm, mm, language=zh_CN, ydType=}` (mm twice like the browser). The same csrtoken/mm is reused across the retry. If a captcha is required (`input#yzm`, after repeated failures) it can't be solved automatically — the CLI then tells the user to inject `USTS_COOKIES` or use `npm run capture`.
 - Sessions expire server-side after hours–days. Re-run `usts login`.
 - Credentials/config: `USTS_BASE_URL`, `USTS_USERNAME`, `USTS_PASSWORD`, `USTS_COOKIES` via `.env` (gitignored) or real env vars. `.env` injects into `process.env` without overriding existing values.
 
 ## Gotchas
 
-- **WAF rate-limiting**: rapid repeated requests get the connection reset (`ERR_CONNECTION_CLOSED`). Wait 30–60s and retry. `loginViaBrowser` already retries 3× with backoff.
+- **WAF rate-limiting**: rapid repeated requests get the connection reset (`ERR_CONNECTION_CLOSED`). Wait 30–60s and retry. `loginViaScript` already retries 3× with backoff (via `requestWithRetry`).
 - **Session-validity check is conservative**: `validateSession` treats only 302→login page, "请先登录"/"登录超时", or login-page HTML as logged-out. A bare "错误提示" page (missing `gnmkdm`/params) means the session is fine, not expired.
 - **Term defaults** (aligned with the web, 2026-08 verified): `JwglClient.currentTerm()` — Aug–Dec → `{xnm: current year, xqm:'3'}` (the upcoming fall semester); Feb–Jul → `{xnm: previous year, xqm:'12'}`; Jan → `{xnm: previous year, xqm:'3'}`. Codes: `3`=fall, `12`=spring, `16`=short term. Passing `-y` without `-t` leaves the term empty = all semesters of that year.
 - Response field names are pinyin abbreviations of the Chinese labels (e.g. `kcmc`=课程名称/course name, `jsxm`=教师/teacher, `xf`=学分/credit). See the comments in `types/api.ts`.

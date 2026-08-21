@@ -8,6 +8,12 @@ import { coursesCommand } from './commands/courses';
 import { profileCommand } from './commands/profile';
 import { scheduleCommand } from './commands/schedule';
 import { clschedCommand } from './commands/clsched';
+import { gpaCommand } from './commands/gpa';
+import { notificationsCommand } from './commands/notifications';
+import { academiaCommand } from './commands/academia';
+import { selectedCoursesCommand } from './commands/selected-courses';
+import { schedulePdfCommand } from './commands/schedule-pdf';
+import { academiaPdfCommand } from './commands/academia-pdf';
 import { interactiveShell } from './commands/interactive';
 import { loadEnv } from './lib/env';
 
@@ -35,7 +41,7 @@ program
 
 program
   .command('login')
-  .description('登录教务系统（浏览器动态加载登录页并自动填入账号密码，会话持久化到 .session.json）')
+  .description('登录教务系统（纯脚本 RSA + 双 POST 重试，无需浏览器；会话持久化到 .session.json）')
   .addHelpText('after', `
   示例:
     usts login                  自动用 .env 中的 USTS_USERNAME/USTS_PASSWORD 登录
@@ -60,6 +66,7 @@ addTermOptions(
   program
     .command('scores')
     .description('查询学生成绩（课程/性质/学分/成绩/绩点/教师/开课学院）')
+    .option('--kcxzdm <课程性质>', '按课程性质代码筛选')
     .addHelpText('after', `
   示例:
     usts scores                 查询当前学期成绩
@@ -143,6 +150,66 @@ program
   .action(async () => {
     const client = new JwglClient(baseUrl);
     await profileCommand(client);
+  });
+
+program
+  .command('gpa')
+  .description('查询学业成绩概览（GPA/学分）')
+  .option('--json', '以 JSON 输出')
+  .action(async (opts) => {
+    await gpaCommand(new JwglClient(baseUrl), opts);
+  });
+
+program
+  .command('notifications')
+  .description('查询首页通知和待办事项')
+  .option('--json', '以 JSON 输出')
+  .action(async (opts) => {
+    await notificationsCommand(new JwglClient(baseUrl), opts);
+  });
+
+program
+  .command('academia')
+  .description('查询学业情况和课程分类概览')
+  .option('--json', '以 JSON 输出')
+  .option('--category <分类名>', '拉取指定分类的课程明细（如：思想政治类）')
+  .addHelpText('after', `
+  示例:
+    usts academia                      学业概况（GPA/统计/分类学分）
+    usts academia --category 思想政治类   查看该分类下的课程明细
+    usts academia --json               机器可读输出`)
+  .action(async (opts) => {
+    await academiaCommand(new JwglClient(baseUrl), opts);
+  });
+
+addTermOptions(
+  program
+    .command('selected-courses')
+    .description('查询已选课程详情（只读）')
+    .option('--json', '以 JSON 输出')
+    .action(async (opts) => {
+      await selectedCoursesCommand(new JwglClient(baseUrl), opts);
+    }),
+);
+
+addTermOptions(
+  program
+    .command('schedule-pdf')
+    .description('下载个人课表 PDF（只读）')
+    .option('-o, --output <文件>', '输出文件路径', 'schedule.pdf')
+    .option('--force', '覆盖已有文件')
+    .action(async (opts) => {
+      await schedulePdfCommand(new JwglClient(baseUrl), opts);
+    }),
+);
+
+program
+  .command('academia-pdf')
+  .description('下载成绩总表 PDF（只读）')
+  .option('-o, --output <文件>', '输出文件路径', 'transcript.pdf')
+  .option('--force', '覆盖已有文件')
+  .action(async (opts) => {
+    await academiaPdfCommand(new JwglClient(baseUrl), opts);
   });
 
 // 无子命令时进入交互式终端；指定子命令（如 usts scores）则按原 CLI 模式运行

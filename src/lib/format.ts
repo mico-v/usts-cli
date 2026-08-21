@@ -59,3 +59,8 @@ export function printTable(headers: string[], rows: (string | undefined)[][], op
   if (normRows.length) console.log(sep);
   if (!normRows.length) console.log('（无数据）');
 }
+
+/** 输出机器可读 JSON；不要在调用前打印带 ANSI 的标题或提示。 */
+export function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, (_key, item) => item === undefined ? null : item, 2));
+}

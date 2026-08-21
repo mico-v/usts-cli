@@ -14,8 +14,12 @@ import { coursesCommand } from './courses';
 import { scheduleCommand } from './schedule';
 import { clschedCommand } from './clsched';
 import { profileCommand } from './profile';
+import { gpaCommand } from './gpa';
+import { notificationsCommand } from './notifications';
+import { academiaCommand } from './academia';
+import { selectedCoursesCommand } from './selected-courses';
 
-type QueryType = 'scores' | 'exams' | 'courses' | 'schedule' | 'clsched';
+type QueryType = 'scores' | 'exams' | 'courses' | 'schedule' | 'clsched' | 'gpa' | 'notifications' | 'academia' | 'selected-courses';
 
 /** 学年下拉项：当前学年往前 5 年，显示 2025-2026 区间格式 */
 function yearChoices(): { name: string; value: string }[] {
@@ -86,6 +90,10 @@ async function queryMenu(): Promise<QueryType | null> {
       { name: '选课名单', value: 'courses' },
       { name: '个人课表', value: 'schedule' },
       { name: '班级课表', value: 'clsched' },
+      { name: 'GPA / 学业成绩概览', value: 'gpa' },
+      { name: '通知 / 待办', value: 'notifications' },
+      { name: '学业情况', value: 'academia' },
+      { name: '已选课程详情', value: 'selected-courses' },
       { name: '返回上级', value: '__back' },
     ],
   }]);
@@ -119,6 +127,20 @@ async function runQuery(type: QueryType, baseUrl: string): Promise<void> {
     }
     case 'clsched': {
       await clschedCommand(client, {});
+      break;
+    }
+    case 'gpa':
+      await gpaCommand(client);
+      break;
+    case 'notifications':
+      await notificationsCommand(client);
+      break;
+    case 'academia':
+      await academiaCommand(client);
+      break;
+    case 'selected-courses': {
+      const form = await askTerm(def.xnm, def.xqm);
+      await selectedCoursesCommand(client, form);
       break;
     }
   }

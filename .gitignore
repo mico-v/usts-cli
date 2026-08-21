@@ -5,3 +5,4 @@ dist/
 .session.json
 _login_page.html
 captures/
+ref/

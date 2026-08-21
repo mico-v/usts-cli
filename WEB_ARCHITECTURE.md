@@ -6,7 +6,7 @@
 
 ## 1. 登录流程（已实测）
 
-> ⚠️ 2026-08 更新：学校已启用 **CAS 统一身份认证**。`login_slogin.html` 仍是经典正方页（不再 302），但登录已迁移到 `sso.usts.edu.cn`（Angular 表单）。旧的正方 RSA 纯脚本登录已失效并移除，登录必须走浏览器导航到 CAS（见 §7.1）。以下 §1 旧流程仅作历史参考。
+> ⚠️ 2026-08 更新：学校一度迁移到 **CAS 统一身份认证**（`sso.usts.edu.cn`），旧的正方 RSA 纯脚本登录曾失效（§7.1 历史）。**2026-08-21 实测：经典正方 `login_slogin.html` 纯脚本登录已恢复可用**，实现见 `loginViaScript()`（RSA 加密 + 双 POST 重试，§4）。以下 §1 流程即当前有效路径。
 
 1. **取登录页**：`GET /xtgl/login_slogin.html`
    - 页面含隐藏域 `csrftoken`，值形如 `uuid,uuid去横线`（每次访问重新生成，登录 POST 必须原样带回）。
@@ -62,23 +62,25 @@
 - **会话依赖**：所有请求携带登录会话 Cookie + 合适 `Referer`；`xnm`(学年，如 `2025`)、`xqm`(学期 `3`=秋/`12`=春/`16`=短学期)。
 - **默认学期**：`JwglClient.currentTerm()` 按当前月份推算，与网页一致（2026-08 实测 8 月网页缺省为 `xnm=今年, xqm='3'`）：8~12 月 → `{xnm:今年, xqm:'3'}`；2~7 月 → `{xnm:去年, xqm:'12'}`；1 月 → `{xnm:去年, xqm:'3'}`。
 
-## 4. 登录实现的两大关键坑（已实测）
+## 4. 登录实现的关键坑（已实测）
 
-### 4.1 RSA 公钥是「按会话绑定」的（旧纯脚本登录已移除，仅历史参考）
+### 4.1 RSA 公钥是「按会话绑定」的
 服务端在**会话**里临时生成 RSA 密钥对，把私钥存于该会话，只下发公钥。因此：
 **取公钥的 GET 请求必须携带与登录 POST 同一个会话 Cookie（JSESSIONID）**，否则服务端用另一个会话的私钥解密，必然「用户名或密码不正确」。
 （Node 的 axios 不会自动管理 Cookie，必须自建 cookie jar，并在登录页 GET、公钥 GET、登录 POST、后续查询之间保持同一份 Cookie。）
 
-### 4.2 前置 WAF 会限流（连接层重置），但浏览器引擎可正常登录
-响应头会下发 `__jsluid_s` Cookie（`SameSite=None; secure`）。实测结论（已更新）：
-- **纯脚本（Node axios）登录会被应用层拒绝**：登录 POST 返回 302 跳回登录页、会话被重置。原因不是加密错误（RSA 与浏览器逐字节一致），而是 WAF 在传输层对脚本客户端的识别 → 重置会话。
-- **Puppeteer 无头浏览器能正常登录**：动态加载登录页 → 输入账号密码 → 点击登录，可成功跳到 `index_initMenu.html`。
-- **WAF 对短时间内的重复请求做限流**：连续多次登录/查询后会出现 `net::ERR_CONNECTION_CLOSED`（连接层直接重置）。**等待约 30~60 秒后重试即可恢复**，正常用户单次登录不受影响。CLI 的 `loginViaBrowser` 已对连接失败做最多 3 次重试 + 退避。
-- 因此采用「Puppeteer 浏览器登录」作为主路径，登录后把会话 Cookie 持久化到 `.session.json`，后续查询用 axios 复用该 Cookie（GET 视图页返回 200/非登录页，会话有效）。
+### 4.2 前置 WAF 会「重置首次登录 POST」——纯脚本双 POST 重试即可登录（2026-08 实测）
+响应头会下发 `__jsluid_s` Cookie（`SameSite=None; secure`）。实测结论（2026-08-21 更新，**推翻了旧版「纯脚本登录不可能」的结论**）：
+- **会话内首次登录 POST 必被应用层拒绝**：返回 302 跳回登录页，并 Set-Cookie **轮换 JSESSIONID**（会话被重置）。原因不是加密错误（RSA 与公钥逐字节正确），而是瑞数 WAF 对新建会话的首次交互式 POST 判定为待校验。
+- **关键：同一 cookie jar 上「第二次登录 POST」即成功**，302 → `index_initMenu.html?jsdm=xs`。重试**不需要**重取 csrftoken/公钥，body 原样（连空 csrftoken 都能成功）；`{csrftoken,yhm,mm}` 单 mm（zfn_api 原样）也可，浏览器行为是双 mm + language/ydType。
+- **纯脚本登录已实现为 `loginViaScript()`**：GET 登录页 → GET 公钥 → RSA 加密 → POST（失败则同会话重试一次）。登录后 profile/scores/schedule 实测均可正常取数。**不再需要 Puppeteer/Chrome**。
+- **WAF 对短时间内的重复请求做限流**：连续多次登录/查询后会出现 `net::ERR_CONNECTION_CLOSED`（连接层直接重置）。**等待约 30~60 秒后重试即可恢复**。`loginViaScript` 已对连接类错误做最多 3 次退避重试。
+- **验证码**（`yzcskz=3`，连续失败 3 次触发）无法用脚本处理：需 `USTS_COOKIES` 注入或 `npm run capture` 人工登录。
+- 登录后把会话 Cookie 持久化到 `.session.json`，后续查询用 axios 复用该 Cookie（GET 视图页返回 200/非登录页，会话有效）。
 
 ## 5. 实现注意事项
 
-- `JwglClient` 已实现：`loginViaBrowser()`（Puppeteer 导航 CAS 登录，含重试）、`restoreSession()`/`saveSession()`（`.session.json` 会话持久化）、`validateSession()`，以及 `postGrid`/`querySchedule`/`queryClassSchedule`/`getBjkbdyOptions` 等查询方法。
+- `JwglClient` 已实现：`loginViaScript()`（纯脚本 RSA + 双 POST 重试登录，无需浏览器）、`restoreSession()`/`saveSession()`（`.session.json` 会话持久化）、`validateSession()`，以及 `postGrid`/`querySchedule`/`queryClassSchedule`/`getBjkbdyOptions` 等查询方法。
 - **会话校验修正**：直接 GET 视图页（如 `xsxxwh_cxXsxx.html`）即使会话有效也常返回「错误提示」页（缺 `gnmkdm`/参数），因此 `validateSession` 只以「302 重定向到登录页 / 出现『请先登录』『登录超时』 / 登录页 HTML」判定失效，不把「错误提示」当作失效。
 - 后续查询命令：登录/恢复会话后，用同一 cookie jar **POST** 到各数据 Action（见第 3 节），附 `gnmkdm` 模块参数，解析返回的 JSON。GET 视图页仅用于校验会话，不用于取数据。
 - 验证码仅在连续失败触发；WAF 限流期间暂停请求、稍后重试即可，无需处理验证码。
@@ -92,8 +94,17 @@
 | `usts courses [--xnm] [--xqm]` | `client.queryCourseList()` | 选课名单，返回课程/选课学生 |
 | `usts profile` | `client.queryProfile()` | 个人信息（姓名/学号/年级/学院/专业/班级/手机） |
 | `usts schedule [--xnm] [--xqm]` | `client.querySchedule()` | 个人课表（2026-08 已修复：POST `xskbcx_cxXsgrkb.html`） |
+| `usts gpa [--json]` | `client.queryGpa()` | 学业成绩概览；页面字段仍需有效会话确认 |
+| `usts notifications [--json]` | `client.queryNotifications()` | 首页通知/待办；字段按 USTS 返回做防御性映射 |
+| `usts academia [--json] [--category 名称]` | `client.queryAcademia()` / `queryAcademiaCategory()` | 学业情况：主页面分类概览 + `--category` 拉取某分类课程明细 |
+| `usts selected-courses [--xnm] [--xqm] [--json]` | `client.querySelectedCourses()` | 已选课程详情候选接口 N253512，只读 |
 
-- 全部为**只读**查询，风险最低；学期缺省时用 `currentTerm()` 推算。
+- PDF 命令已实现只读请求链：`usts schedule-pdf` 使用 `bjkbdy_cxXnxqsfkz.html` → `xskbcx_cxXsShcPdf.html`；`usts academia-pdf` 使用成绩总表打印模块的多步生成接口。代码会校验登录页、HTTP 状态和 `%PDF-` 文件头。由于 PDF 含个人信息，live 下载需要用户明确指定安全输出路径；当前仅完成代码/build 验证，未在本轮落盘真实 PDF。
+- `usts notifications` 已在有效会话下实测：POST `/xtgl/index_cxDbsy.html?doType=query`，请求体使用 `sfyy`、`flag`、`queryModel.showCount/currentPage/sortName/sortOrder` 等字段；当前返回通知数组，本次测试返回 6 条。标题使用 `xxbt`，正文使用 `xxnr`，创建时间使用 `cjsj`。
+- `usts gpa` 与 `usts academia` 已在有效会话下实测：GET `/xsxy/xsxyqk_cxXsxyqkIndex.html?gnmkdm=N105515&layout=default`；页面是 HTML + 前端 JavaScript 模板，**分类树嵌在 JS 模板里**（节点形如 `"名称&nbsp;" + $.i18n.get('yqxf')/* 要求学分 */ + ":N&nbsp;" ... + "<span id='showKc<ID>'>"`），解析出 29 个分类节点（根=年级+专业，下分 通识教育课程/专业教育课程/素质拓展课程 等）。
+- **学业分类明细（2026-08 实测）**：POST `/xsxy/xsxyqk_cxJxzxjhxfyqKcxx.html?gnmkdm=N105515`，body `{xfyqjd_id=<showKc的ID>}`，返回**课程数组**（非 items 包装）。字段：`KCH`/`KCMC`/`KCYWMC`(英文)/`XDZT`(修读状态)/`XF`/`KCLBMC`(类别)/`KCXZMC`(性质)/`CJ`(成绩)/`MAXCJ`(最佳)/`JD`(绩点)/`JYXDXNMC`+`JYXDXQMC`(建议学期)/`SFJHKC`(是否计划)/`XSXXXX`(学时组成)。实测 31 个叶子节点中 18 个有数据（如 思想政治类 8 门、大学英语 4 门）；**汇总节点（语言类/通识必修课/根节点）返回空**。`usts academia --category <名称>` 按名称子串匹配拉取。
+- `scores` 主接口 `cjcx_cxXsgrcj.html` 为空时，自动回退 `cjcx_cxDgXscj.html`（2026-08 实测可用，返回相同 13 门课）。
+- **选课板块课列表（zfn `get_block_courses`）暂未实现**：非选课期 `GET /xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default` 只返回静态提示「当前不属于选课阶段」（无 `role=tab`/`kklxdm`/`xkkz_id` 隐藏域），zfn 的多步解析无法落地；需在选课期抓包确认板块 tab 结构后再实现。
 - `scores` 已实跑取回真实数据（10 门课）；`exams`/`courses` 接口契约已确认（该生对应学期暂为空数据，返回空网格）；`profile` 已正确解析出姓名/学号/年级/班级/手机。
 - 课表 `schedule` 因本校课表为 JS 动态加载且其 `xskbcx.js` 被 WAF 拦截，暂未能稳定抓取；后续可尝试从模块 JS 中提取真正的课表数据 Action 或解析 JS 注入的课表变量。
 
@@ -101,9 +112,10 @@
 
 通过 `tools/capture-browser.mjs`（Puppeteer 可见浏览器 + 自动记录每次导航的最终渲染 DOM 与全部 XHR/fetch 请求体/响应体）抓包，实测结论：
 
-### 7.1 登录已迁移到 CAS 统一身份认证
-- 登录走 **CAS 统一身份认证**：`https://sso.usts.edu.cn/login?service=http://jwgl.usts.edu.cn/sso/jasiglogin/jwglxt`（Angular/NG-ZORRO 表单）。`login_slogin.html` 仍是经典正方页（不再 302），旧的正方 RSA 纯脚本登录已失效并移除。
-- **jwgl 与 SSO 均前置瑞数 JSLUID WAF**（`__jsluid_s` cookie），纯 axios 拿不到登录表单（返回 `#sso_redirect` JS 挑战重定向页），必须用浏览器执行 JS。
+### 7.1 登录曾迁移到 CAS（2026-08 历史，现已回退到经典正方页登录）
+> ⚠️ 下述 CAS 流程是旧版抓包结论。**2026-08-21 实测 `login_slogin.html` 经典正方登录已恢复可用**（§4.2 双 POST 重试），纯脚本 `loginViaScript()` 即可登录，无需浏览器。CAS 流程仅作历史参考：
+- 登录曾走 **CAS 统一身份认证**：`https://sso.usts.edu.cn/login?service=http://jwgl.usts.edu.cn/sso/jasiglogin/jwglxt`（Angular/NG-ZORRO 表单）。
+- **jwgl 与 SSO 均前置瑞数 JSLUID WAF**（`__jsluid_s` cookie），纯 axios 曾拿不到登录表单（返回 `#sso_redirect` JS 挑战重定向页），须用浏览器执行 JS。
 - 字段：`input[name="username"]`、`input[type="password"]`（无 name）、隐藏 `captcha_code`（需要验证码时才出现可见输入框）、隐藏 `execution`/`_eventId`/`type`/`geolocation`。
 - 登录按钮 `button.login-button`，初始带 `disabled` class，填完表单才可点击；`execution` 令牌随会话绑定，GET 登录页与 POST 提交须保持同一 Cookie。
 - **填表单用原生 setter + input/change 事件**（`page.type` 会被 Angular 重渲染截断，实测只输入 2 字符）。

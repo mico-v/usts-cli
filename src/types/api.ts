@@ -141,3 +141,81 @@ export interface ClassScheduleView {
   defaultGrade: string;
   defaultCampus: string;
 }
+
+// 首页待办/通知
+export interface NotificationItem extends Record<string, any> {
+  id?: string;
+  title?: string;
+  type?: string;
+  content?: string;
+  createdAt?: string;
+  unread?: boolean;
+  url?: string;
+}
+
+// 学业情况页面中的 GPA/学分概览
+export interface GpaSummary extends Record<string, any> {
+  gpa?: number;
+  averageScore?: number;
+  totalCredits?: number;
+  earnedCredits?: number;
+  rawText?: string[];
+}
+
+export interface AcademiaCategory extends Record<string, any> {
+  id?: string;
+  name: string;
+  requiredCredits?: number;
+  earnedCredits?: number;
+  missingCredits?: number;
+  detailAvailable?: boolean;
+}
+
+// 学业分类明细课程（来源：xsxyqk_cxJxzxjhxfyqKcxx.html?gnmkdm=N105515 返回数组）
+export interface AcademiaCourseItem extends Record<string, any> {
+  courseId?: string;     // KCH 课程号
+  title?: string;        // KCMC 课程名称
+  englishTitle?: string; // KCYWMC 英文名称
+  status?: string;       // XDZT 修读状态（3=未修/4=已修？，按数字字符串保留）
+  credit?: number;       // XF 学分
+  category?: string;     // KCLBMC 课程类别（通识教育/专业教育/素质拓展）
+  nature?: string;       // KCXZMC 课程性质（必修/任选）
+  grade?: string;        // CJ 成绩
+  maxGrade?: string;     // MAXCJ 最佳成绩
+  gpa?: number;          // JD 绩点
+  displayTerm?: string;  // JYXDXNMC + JYXDXQMC 建议修读学年·学期
+  planned?: boolean;     // SFJHKC 是否计划课程
+  hours?: string;        // XSXXXX 学时组成
+}
+
+export interface AcademiaSummary extends Record<string, any> {
+  studentId?: string;
+  gpa?: number;
+  plannedCourses?: number;
+  passedCourses?: number;
+  failedCourses?: number;
+  unlearnedCourses?: number;
+  inProgressCourses?: number;
+  unplannedPassedCourses?: number;
+  unplannedFailedCourses?: number;
+  categories: AcademiaCategory[];
+  rawText?: string[];
+}
+
+// 已选课程；与 courses 命令的课程名单保持不同模型
+export interface SelectedCourseItem extends Record<string, any> {
+  courseId?: string;
+  classId?: string;
+  executionId?: string;
+  title?: string;
+  teacher?: string;
+  teacherId?: string;
+  credit?: number;
+  category?: string;
+  capacity?: number;
+  selectedNumber?: number;
+  place?: string;
+  time?: string;
+  optional?: boolean;
+  waiting?: string;
+}

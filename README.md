@@ -35,6 +35,8 @@ npm install        # 安装依赖
 npm run build      # 编译 TypeScript 到 dist/
 ```
 
+> **登录不依赖浏览器**：账号密码登录是纯脚本（RSA + 双 POST 重试），无需安装 Puppeteer/Chrome。`puppeteer*` 仅在 `devDependencies`，只服务于开发用的 `npm run capture` 抓包工具；生产/无浏览器环境可按需 `npm install --omit=dev` 跳过它。
+
 构建后即可使用。推荐把 `dist/index.js` 当作 `usts` 命令运行：
 
 ```bash
@@ -79,9 +81,9 @@ usts login
 
 1. 若 `.session.json` 中已有**有效**会话 → 直接复用。
 2. 若设置了环境变量 `USTS_COOKIES` → 注入并校验该 Cookie。
-3. 否则通过 **Puppeteer 无头浏览器**导航到学校 **CAS 统一身份认证**（`sso.usts.edu.cn`）自动填入账号密码并点击登录。
+3. 否则通过**账号密码纯脚本登录**：经典正方 RSA 加密 + 「双 POST 重试」（`loginViaScript`）。
 
-> 学校登录走 **CAS 统一身份认证**（jwgl 与 SSO 前置瑞数 WAF，纯脚本无法登录，必须浏览器）。自动登录直接导航到 CAS 页，填 `username`/`password` 提交；若该次登录需要**图形验证码**（无法自动处理），会提示改用 `npm run capture` 人工登录后复用会话，或注入 `USTS_COOKIES`。
+> 登录走经典正方页 `login_slogin.html`（瑞数 WAF 会重置「会话内首次登录 POST」，所以脚本会同一会话重试一次即成功）。**无需安装 Puppeteer/Chrome，无需浏览器**。若该次登录需要**图形验证码**（连续失败触发，无法自动处理），会提示改用 `npm run capture` 人工登录后复用会话，或注入 `USTS_COOKIES`。
 
 > 若 `.env` 未配置账号密码，`usts login` 会在终端交互式询问学号与密码（密码输入以 `*` 遮罩）。
 
@@ -98,6 +100,10 @@ usts login
 | `usts schedule` | 查询个人课表 | 可选 |
 | `usts clsched` | 查询班级课表（级联选学院/专业/班级，可查任意班级） | 可选 |
 | `usts profile` | 查询个人信息 | 否 |
+| `usts gpa` | 查询学业成绩概览（GPA/学分） | 否 |
+| `usts notifications` | 查询通知和待办事项 | 否 |
+| `usts academia` | 查询学业情况（GPA/统计/课程分类，可 `--category` 拉明细） | 否 |
+| `usts selected-courses` | 查询已选课程详情（只读） | 可选 |
 
 查看任意命令的详细帮助：
 
@@ -210,11 +216,33 @@ usts profile
 
 输出：学号 / 姓名 / 学院 / 专业 / 班级 / 年级（含入学年份）/ 身份证 / 手机 / 邮箱（对应字段缺失时自动跳过）。
 
+### 8. gpa / academia / notifications / selected-courses
+
+这些命令参考 `zfn_api` 的只读接口，但请求路径、字段和分页以 USTS 实际版本为准：
+
+```bash
+usts gpa                         # 学业成绩概览
+usts gpa --json                  # 机器可读 JSON
+usts notifications               # 首页通知/待办
+usts academia                    # 学业概况（GPA/统计/分类学分）
+usts academia --category 思想政治类   # 拉取某分类下的课程明细
+usts selected-courses -y 2025 -t 3
+```
+
+`academia --category` 按分类名（子串匹配）拉取该分类的课程明细（课程号/成绩/绩点/建议学期等）；汇总节点（如「语言类」）无直接明细，需查其叶子分类（如「大学英语」）。`scores` 主接口无数据时自动回退备用接口。`selected-courses` 与 `courses` 不是同一个功能：前者查询已选课程详情（教学班、容量、已选人数、地点等），后者查询课程名单。上述命令均为只读，不执行选课或退课操作。`zfn_api` 使用的旧学期参数 `1/2` 不适用于本项目，当前 USTS 仍使用 `xqm=3/12/16`。
+
 ---
 
-## 会话与凭证
+### 9. PDF 下载（只读）
 
-- **会话文件**：登录后写入项目根目录的 `.session.json`（已在 `.gitignore` 中忽略，**请勿提交**）。
+```bash
+usts schedule-pdf -y 2026 -t 3 -o ./schedule.pdf
+usts academia-pdf -o ./transcript.pdf
+```
+
+默认拒绝覆盖已有文件，使用 `--force` 才会覆盖。PDF 可能包含个人课表、成绩和学籍信息，请自行选择安全的输出路径。实现已接入正方打印模块的多步只读请求链，并校验 `%PDF-` 文件头；不同时间段/模块权限可能导致服务器拒绝生成文件。
+
+
 - **有效期**：会话由教务系统控制，一般数小时至数天；过期后查询会提示「会话已失效，请重新运行 usts login」。
 - **手动注入 Cookie**：如果你已在浏览器登录，可把请求头里的 `Cookie` 整串复制到环境变量 `USTS_COOKIES`，运行 `usts login` 即可校验并复用，无需账号密码：
 
@@ -233,8 +261,8 @@ A：先运行 `usts login`。若已登录仍失效，说明会话过期，重新
 **Q：请求失败、报错 `ERR_CONNECTION_CLOSED` 或卡住？**
 A：校园网前置 WAF 对短时间内的重复请求有限流，会直接重置连接。请**暂停 30~60 秒后重试**。登录命令已内置重试与退避，查询命令遇到限流时稍等再试即可。
 
-**Q：`usts login` 无法弹出浏览器 / 一直失败？**
-A：确保已安装 Puppeteer 所需的浏览器（首次 `npm install` 通常会自动下载）。若环境无法运行浏览器，`login` 会提示改用 `USTS_COOKIES` 注入方式登录。
+**Q：`usts login` 提示需要验证码 / 一直失败？**
+A：登录是纯脚本（无需浏览器）。若提示「需要图形验证码」，说明账号刚被连续失败锁出，请改用 `USTS_COOKIES` 注入已登录的浏览器 Cookie，或 `npm run capture` 人工登录。若为 `ERR_CONNECTION_CLOSED`，属 WAF 限流，等待 30~60 秒重试即可。
 
 **Q：查询返回空数据？**
 A：可能是该学期确实没有对应记录，或学期参数推算不符合预期。请用 `-y` / `-t` 显式指定目标学期重试。课表（`schedule`）若持续为空，是当前解析方式的已知限制。

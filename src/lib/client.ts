@@ -1,8 +1,9 @@
 // 正方教务系统 API 客户端
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SessionState, LoginResponse, ScoreItem, ScheduleItem, ProfileInfo, ExamItem, CourseListItem, SelectOption, ClassScheduleQuery, ClassScheduleItem, ClassScheduleView } from '../types/api';
+import { SessionState, LoginResponse, ScoreItem, ScheduleItem, ProfileInfo, ExamItem, CourseListItem, SelectOption, ClassScheduleQuery, ClassScheduleItem, ClassScheduleView, NotificationItem, GpaSummary, AcademiaSummary, AcademiaCategory, AcademiaCourseItem, SelectedCourseItem } from '../types/api';
 
 const SESSION_FILE = path.resolve(process.cwd(), '.session.json');
 const UA =
@@ -52,142 +53,117 @@ export class JwglClient {
   }
 
   /**
-   * 浏览器登录（CAS 统一身份认证，2026-08 实测）。
-   * 学校已迁移到 CAS：jwgl 登录页会转到 sso.usts.edu.cn（前置瑞数 JSLUID WAF，
-   * 纯 axios 脚本被拦截），故直接用无头浏览器导航到 CAS 登录页登录。
-   * 字段：input[name=username] / input[type=password] / 隐藏 captcha_code；
-   * 登录按钮 button.login-button（初始带 disabled class）。
-   * 出现验证码时无法自动处理 → 提示改用 npm run capture 或 USTS_COOKIES。
+   * 纯脚本登录（2026-08 实测）。经典正方 RSA 登录 + 「双 POST 重试」。
+   *
+   * USTS 前置瑞数 JSLUID WAF 会重置「会话内首次登录 POST」：
+   *   第一次 POST 总被 302 跳回登录页（Set-Cookie 轮换 JSESSIONID），
+   *   同一 cookie jar 上第二次 POST 即可成功跳到 index_initMenu。
+   *   （实测 zfn_api 原样 body {csrftoken,yhm,mm} 单 mm 也能成功，重试是关键。）
+   * 出现验证码（账号被连续失败锁出）时无法自动处理 → 提示改用 USTS_COOKIES/capture。
    */
-  async loginViaBrowser(username: string, password: string): Promise<LoginResponse> {
-    let puppeteer: typeof import('puppeteer');
+  async loginViaScript(username: string, password: string): Promise<LoginResponse> {
     try {
-      puppeteer = await import('puppeteer');
-    } catch {
-      return { success: false, message: '未安装 puppeteer，无法使用浏览器登录（请 npm install puppeteer）' };
-    }
+      // 1. 取登录页，解析 csrftoken，检测验证码
+      const pageResp = await this.requestWithRetry(() =>
+        this.http.get('/xtgl/login_slogin.html', { headers: { Cookie: this.cookieHeader() } }),
+      );
+      this.storeCookies(pageResp.headers);
+      if (pageResp.status >= 300 && pageResp.status < 400) {
+        return { success: false, message: '登录页被重定向，可能被 WAF 拦截，请稍后重试或改用 USTS_COOKIES' };
+      }
+      const html = typeof pageResp.data === 'string' ? pageResp.data : '';
+      const csrfMatch = html.match(/id="csrftoken"[^>]*value="([^"]*)"/);
+      const csrf = csrfMatch ? csrfMatch[1] : '';
+      if (!csrf) return { success: false, message: '登录页缺少 csrftoken，接口可能已变更' };
+      if (/id="yzm"|name="yzm"/.test(html)) {
+        return { success: false, message: '账号当前需要图形验证码，无法自动登录。请把浏览器 Cookie 粘贴到 USTS_COOKIES 后运行 usts login，或用 npm run capture 人工登录' };
+      }
 
-    const host = new URL(this.baseUrl).host;
-    const service = `http://${host}/sso/jasiglogin/jwglxt`;
-    const casUrl = `https://sso.usts.edu.cn/login?service=${encodeURIComponent(service)}`;
+      // 2. 取 RSA 公钥（必须与登录 POST 保持同一会话）
+      const keyResp = await this.requestWithRetry(() =>
+        this.http.get('/xtgl/login_getPublicKey.html', {
+          headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}/xtgl/login_slogin.html` },
+        }),
+      );
+      this.storeCookies(keyResp.headers);
+      const keyJson: any = keyResp.data;
+      if (!keyJson || !keyJson.modulus || !keyJson.exponent) {
+        return { success: false, message: '获取 RSA 公钥失败，请稍后重试' };
+      }
+      const mm = this.encryptPassword(password, keyJson.modulus, keyJson.exponent);
 
-    const maxAttempts = 3;
-    let lastErr = '';
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      let browser;
-      try {
-        browser = await puppeteer.launch({
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'],
+      // 3. 提交登录（首 POST 会被 WAF 重置会话 → 同一 cookie jar 重试一次）
+      const postLogin = () => {
+        const body = new URLSearchParams();
+        body.append('csrftoken', csrf);
+        body.append('language', 'zh_CN');
+        body.append('ydType', '');
+        body.append('yhm', username);
+        body.append('mm', mm);
+        body.append('mm', mm); // 浏览器会提交两次 mm（可见框 + 隐藏框）
+        return this.http.post(`/xtgl/login_slogin.html?time=${Date.now()}`, body.toString(), {
+          headers: {
+            Cookie: this.cookieHeader(),
+            Referer: `${this.baseUrl}/xtgl/login_slogin.html`,
+            Origin: this.baseUrl,
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
         });
-        const page = await browser.newPage();
-        page.setDefaultTimeout(60000);
-
-        // 等 WAF 挑战 + Angular 渲染出登录表单
-        await page.goto(casUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        await page.waitForSelector('input[name="username"]', { timeout: 60000 });
-        await new Promise((r) => setTimeout(r, 3000));
-
-        // 用原生 setter + input/change 事件注入（page.type 会被 Angular 重渲染截断）
-        const fillForm = (user: string, pass: string) =>
-          page.evaluate(
-            (u: string, p: string) => {
-              const g = globalThis as any;
-              const set = (el: any, v: string) => {
-                if (!el) return;
-                const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value') as any;
-                d.set.call(el, v);
-                el.dispatchEvent(new (g.Event)('input', { bubbles: true }));
-                el.dispatchEvent(new (g.Event)('change', { bubbles: true }));
-              };
-              set(g.document?.querySelector('input[name="username"]'), u);
-              set(g.document?.querySelector('input[type="password"]'), p);
-            },
-            user,
-            pass,
-          );
-        await fillForm(username, password);
+      };
+      let resp = await this.requestWithRetry(postLogin);
+      this.storeCookies(resp.headers);
+      let location: string = resp.headers['location'] || '';
+      if (!/index_initMenu/.test(location)) {
         await new Promise((r) => setTimeout(r, 1000));
-        // 校验字段已填入（防渲染竞态截断），必要时补填一次
-        const filled = await page.evaluate(() => {
-          const g = globalThis as any;
-          const u = g.document?.querySelector('input[name="username"]');
-          const p = g.document?.querySelector('input[type="password"]');
-          return !!u && !!p && u.value.length > 0 && p.value.length > 0;
-        });
-        if (!filled) {
-          await new Promise((r) => setTimeout(r, 1500));
-          await fillForm(username, password);
-        }
+        resp = await this.requestWithRetry(postLogin);
+        this.storeCookies(resp.headers);
+        location = resp.headers['location'] || '';
+      }
 
-        // 若出现可见验证码，无法自动处理 → 给出兜底路径
-        const needCaptcha = await page.evaluate(() => {
-          const g = globalThis as any;
-          const visible = (sel: string) => {
-            const el = g.document?.querySelector(sel);
-            if (!el) return false;
-            const r = el.getBoundingClientRect();
-            return r.width > 0 && r.height > 0;
-          };
-          return (
-            visible('input[name^="captcha"]:not([type="hidden"])') ||
-            visible('img[src*="captcha"], img[src*="kaptcha"], img[src*="yzm"], img[src*="verify"]')
-          );
-        });
-        if (needCaptcha) {
-          return {
-            success: false,
-            message: '本次登录需要图形验证码，无法自动完成。请改用 npm run capture 人工登录，或把浏览器 Cookie 粘贴到 USTS_COOKIES 后运行 usts login',
-          };
-        }
-
-        // 等登录按钮可用并点击
-        await page
-          .waitForFunction(
-            () => {
-              const b = (globalThis as any).document?.querySelector('button.login-button');
-              return !!b && !b.classList.contains('disabled');
-            },
-            { timeout: 10000 },
-          )
-          .catch(() => {});
-        const navPromise = page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 45000 }).catch(() => {});
-        await page.evaluate(() => {
-          const b = (globalThis as any).document?.querySelector('button.login-button');
-          if (b && !b.classList.contains('disabled')) b.click();
-        });
-        await navPromise;
-
-        // CAS → jwgl 换票可能多跳，轮询等待主菜单
-        let ok = false;
-        for (let i = 0; i < 20 && !ok; i++) {
-          await new Promise((r) => setTimeout(r, 2000));
-          ok = await page.evaluate(() => (globalThis as any).location.href.includes('index_initMenu')).catch(() => false);
-        }
-        if (!ok) {
-          return { success: false, message: '登录失败：账号或密码不正确，或未跳转到主菜单' };
-        }
-        const cookies = (await page.cookies())
-          .map((c: { name: string; value: string }) => `${c.name}=${c.value}`)
-          .join('; ');
-        this.setCookies(cookies);
+      if (/index_initMenu/.test(location)) {
         this.session.username = username;
         this.session.loginTime = new Date();
         this.saveSession();
         return { success: true, message: '登录成功', data: { username } };
-      } catch (e: any) {
-        lastErr = e?.message || '浏览器登录异常';
-        // 连接层被 WAF 重置时重试（限流/抖动）
-        if (attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 8000 * attempt));
-          continue;
-        }
-        return { success: false, message: `浏览器登录异常：${lastErr}` };
-      } finally {
-        if (browser) await browser.close();
       }
+      const body = typeof resp.data === 'string' ? resp.data : '';
+      if (/用户名或密码/.test(body)) return { success: false, message: '用户名或密码不正确' };
+      return { success: false, message: '登录失败：未跳转到主菜单，请检查账号密码后重试' };
+    } catch (e: any) {
+      return { success: false, message: `登录异常：${e?.message || '未知错误'}` };
     }
-    return { success: false, message: `浏览器登录失败：${lastErr}` };
+  }
+
+  // RSA(PKCS#1 v1.5) 加密密码（公钥 modulus/exponent 为 base64），返回 base64 密文
+  private encryptPassword(password: string, modulus: string, exponent: string): string {
+    const toInt = (b: Buffer): Buffer => {
+      let s = b;
+      while (s.length > 1 && s[0] === 0) s = s.subarray(1);
+      if ((s[0] & 0x80) !== 0) s = Buffer.concat([Buffer.from([0]), s]);
+      return s;
+    };
+    const tlv = (tag: number, content: Buffer): Buffer => {
+      const len = content.length;
+      if (len < 0x80) return Buffer.concat([Buffer.from([tag, len]), content]);
+      const lb: number[] = [];
+      let n = len;
+      while (n > 0) {
+        lb.unshift(n & 0xff);
+        n >>>= 8;
+      }
+      return Buffer.concat([Buffer.from([tag, 0x80 | lb.length, ...lb]), content]);
+    };
+    const seq = tlv(0x30, Buffer.concat([
+      tlv(0x02, toInt(Buffer.from(modulus, 'base64'))),
+      tlv(0x02, toInt(Buffer.from(exponent, 'base64'))),
+    ]));
+    const b64 = seq.toString('base64').match(/.{1,64}/g)!.join('\n');
+    const pem = '-----BEGIN RSA PUBLIC KEY-----\n' + b64 + '\n-----END RSA PUBLIC KEY-----';
+    return crypto.publicEncrypt(
+      { key: pem, padding: crypto.constants.RSA_PKCS1_PADDING },
+      Buffer.from(password),
+    ).toString('base64');
   }
 
   // 会话持久化：保存 Cookie 到 .session.json
@@ -239,7 +215,7 @@ export class JwglClient {
   }
 
   // WAF 会对短时间内的重复请求做连接层重置（ERR_CONNECTION_CLOSED），
-  // 对连接类错误做有限次退避重试（登录已在 loginViaBrowser 内单独处理）。
+  // 对连接类错误做有限次退避重试（登录 POST 已在 loginViaScript 内双 POST 重试）。
   private async requestWithRetry(fn: () => Promise<AxiosResponse>): Promise<AxiosResponse> {
     const maxAttempts = 3;
     let lastErr: any;
@@ -359,10 +335,9 @@ export class JwglClient {
     return m ? { start: Number(m[1]), end: Number(m[2]) } : {};
   }
 
-  /** 学生成绩查询 */
+  /** 学生成绩查询；主接口为空时自动回退到备用接口 cjcx_cxDgXscj.html（2026-08 实测可用） */
   async queryScores(xnm = '', xqm = '', extra: Record<string, string> = {}): Promise<ScoreItem[]> {
-    const items = await this.postGrid('/cjcx/cjcx_cxXsgrcj.html', 'N305005', { xnm, xqm, ...extra });
-    return items.map((it: any) => ({
+    const mapItem = (it: any): ScoreItem => ({
       courseName: it.kcmc || '',
       courseCode: it.kch || '',
       courseNature: it.kcxzmc || '',
@@ -379,7 +354,13 @@ export class JwglClient {
       className: it.bj || '',
       major: it.zymc || '',
       teachingClass: it.jxbmc || '',
-    }));
+    });
+    let items = await this.postGrid('/cjcx/cjcx_cxXsgrcj.html', 'N305005', { xnm, xqm, ...extra });
+    if (items.length === 0) {
+      // 备用接口（学生个人成绩另一 action），防止主接口异常/改版导致取不到
+      items = await this.postGrid('/cjcx/cjcx_cxDgXscj.html', 'N305005', { xnm, xqm, ...extra });
+    }
+    return items.map(mapItem);
   }
 
   /** 考试信息查询（真实 action 带 Index 后缀，2026-08 实测） */
@@ -617,5 +598,333 @@ export class JwglClient {
       .map((it: any) => it.qtkcgs || it.sjkcgs || '')
       .filter(Boolean);
     return { items, practice };
+  }
+
+  /** 首页待办/通知查询（只读）。接口字段在不同模块版本中可能略有差异，保留 raw。 */
+  async queryNotifications(): Promise<NotificationItem[]> {
+    const path = '/xtgl/index_cxDbsy.html';
+    const body = new URLSearchParams({
+      sfyy: '0', flag: '1', _search: 'false', nd: String(Date.now()),
+      'queryModel.showCount': '1000', 'queryModel.currentPage': '1',
+      'queryModel.sortName': 'cjsj', 'queryModel.sortOrder': 'desc', time: '0',
+    });
+    const resp = await this.requestWithRetry(() => this.http.post(`${path}?doType=query`, body.toString(), {
+      headers: {
+        Cookie: this.cookieHeader(),
+        Referer: `${this.baseUrl}/xtgl/index_initMenu.html`,
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    }));
+    this.assertReadableResponse(resp);
+    const data: any = this.parseResponseData(resp);
+    const list: any[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+    return list.map((it: any) => {
+      const content = String(it.xxnr ?? it.content ?? '');
+      const title = String(it.xxbt ?? it.title ?? it.bt ?? '');
+      return {
+        id: it.id ?? it.dbid ?? it.tzid,
+        title,
+        type: it.type ?? it.lx ?? undefined,
+        content,
+        createdAt: it.cjsj ?? it.createTime ?? it.sj,
+        unread: it.sfyy === '1' || it.sfyy === 1 || it.isRead === false,
+        url: it.url ?? it.href ?? it.ckurl,
+        raw: it,
+      };
+    });
+  }
+
+  /** 学业情况页面概览；不依赖 zfn_api 对固定 font 节点的脆弱假设。 */
+  async queryGpa(): Promise<GpaSummary> {
+    const path = '/xsxy/xsxyqk_cxXsxyqkIndex.html';
+    const resp = await this.requestWithRetry(() => this.http.get(`${path}?gnmkdm=N105515&layout=default`, {
+      headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}/xtgl/index_initMenu.html` },
+    }));
+    this.assertReadableResponse(resp);
+    const html = String(resp.data || '');
+    const visible = this.cleanHtml(html);
+    const texts = this.extractVisibleText(html);
+    const fontValues = [...html.matchAll(/<font[^>]*size=["']?2px["']?[^>]*>([\s\S]*?)<\/font>/gi)]
+      .map((m) => this.toNumber(this.cleanHtml(m[1])))
+      .filter((v): v is number => v !== undefined);
+    const numbers = (patterns: RegExp[]): number | undefined => {
+      for (const pattern of patterns) {
+        const m = visible.match(pattern);
+        if (!m) continue;
+        const n = Number(m[1]);
+        if (Number.isFinite(n)) return n;
+      }
+      return undefined;
+    };
+    return {
+      gpa: numbers([/(?:平均绩点|GPA)[^0-9]{0,30}([0-9]+(?:\.[0-9]+)?)/i]) ?? fontValues[2],
+      averageScore: numbers([/(?:平均分|平均成绩)[^0-9]{0,30}([0-9]+(?:\.[0-9]+)?)/]),
+      totalCredits: numbers([/(?:总学分|计划学分)[^0-9]{0,30}([0-9]+(?:\.[0-9]+)?)/]),
+      earnedCredits: numbers([/(?:获得学分|已修学分|修得学分)[^0-9]{0,30}([0-9]+(?:\.[0-9]+)?)/]),
+      rawText: texts,
+    };
+  }
+
+  /** 学业情况主页面摘要及课程分类。分类详情以后按需扩展，避免一次请求过多。 */
+  async queryAcademia(): Promise<AcademiaSummary> {
+    const path = '/xsxy/xsxyqk_cxXsxyqkIndex.html';
+    const resp = await this.requestWithRetry(() => this.http.get(`${path}?gnmkdm=N105515&layout=default`, {
+      headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}/xtgl/index_initMenu.html` },
+    }));
+    this.assertReadableResponse(resp);
+    const html = String(resp.data || '');
+    const text = this.extractVisibleText(html);
+    const sid = this.matchText(html, /id=["']xh_id["'][^>]*value=["']([^"']+)["']/i) || this.session.username;
+
+    // 分类树（页面为前端 JS 模板拼装，节点形如：
+    //   "名称&nbsp;" + $.i18n.get('yqxf')/* 要求学分 */ + ":N&nbsp;" + ... + "<span id='showKc<ID>'>")
+    const categories: AcademiaCategory[] = [];
+    const nodeRe =
+      /"([^"]+?)&nbsp;"\s*\+\s*\$\.i18n\.get\('yqxf'\)\/\* 要求学分 \*\/\s*\+\s*":([0-9.]+)&nbsp;"\s*\+\s*\$\.i18n\.get\('hdxf'\)\/\* 获得学分 \*\/\s*\+\s*":([0-9.]+)&nbsp;&nbsp;"\s*\+\s*\$\.i18n\.get\('whdxf'\)\/\* 未获得学分 \*\/\s*\+\s*":([0-9.]+)&nbsp;"\s*\+\s*"<span id='showKc([^']*)'>/g;
+    let m: RegExpExecArray | null;
+    while ((m = nodeRe.exec(html))) {
+      const name = (m[1] || '').trim();
+      if (!name || /\$|\.i18n|span|id=/.test(name)) continue;
+      categories.push({
+        name,
+        id: m[5] || undefined,
+        requiredCredits: JwglClient.toNum(m[2]),
+        earnedCredits: JwglClient.toNum(m[3]),
+        missingCredits: JwglClient.toNum(m[4]),
+        detailAvailable: !!m[5],
+        raw: [m[1], m[2], m[3], m[4], m[5]],
+      });
+    }
+
+    const summaryText = text.join(' ');
+    const stat = (pattern: RegExp): number | undefined => this.toNumber(this.matchText(summaryText, pattern));
+    return {
+      studentId: sid,
+      gpa: this.toNumber(this.matchText(summaryText, /(?:平均学分绩点（GPA）|平均绩点|GPA)[^0-9]*([0-9]+(?:\.[0-9]+)?)/i)),
+      plannedCourses: stat(/计划总课程\s*(\d+)\s*门/),
+      passedCourses: stat(/计划总课程\s*\d+\s*门\s*通过\s*(\d+)\s*门/),
+      failedCourses: stat(/未通过\s*(\d+)\s*门/),
+      unlearnedCourses: stat(/未修\s*(\d+)\s*门/),
+      inProgressCourses: stat(/在读\s*(\d+)\s*门/),
+      unplannedPassedCourses: stat(/计划外：\s*通过\s*(\d+)\s*门/),
+      unplannedFailedCourses: stat(/计划外：\s*通过\s*\d+\s*门，?\s*未通过\s*(\d+)\s*门/),
+      categories,
+      rawText: text,
+    };
+  }
+
+  /** 学业分类明细：按分类 id 拉取课程列表（xsxyqk_cxJxzxjhxfyqKcxx.html，2026-08 实测 18/31 个叶子分类有数据） */
+  async queryAcademiaCategory(xfyqjdId: string): Promise<AcademiaCourseItem[]> {
+    if (!xfyqjdId) return [];
+    const resp = await this.requestWithRetry(() =>
+      this.http.post('/xsxy/xsxyqk_cxJxzxjhxfyqKcxx.html?gnmkdm=N105515', new URLSearchParams({ xfyqjd_id: xfyqjdId }).toString(), {
+        headers: {
+          Cookie: this.cookieHeader(),
+          Referer: `${this.baseUrl}/xsxy/xsxyqk_cxXsxyqkIndex.html`,
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      }),
+    );
+    this.assertReadableResponse(resp);
+    let data: any = resp.data;
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch { return []; } }
+    if (!Array.isArray(data)) return [];
+    return data.map((it: any) => ({
+      courseId: it.KCH || '',
+      title: it.KCMC || '',
+      englishTitle: it.KCYWMC || '',
+      status: it.XDZT != null ? String(it.XDZT) : undefined,
+      credit: JwglClient.toNum(it.XF),
+      category: it.KCLBMC || '',
+      nature: it.KCXZMC || '',
+      grade: it.CJ ?? '',
+      maxGrade: it.MAXCJ ?? '',
+      gpa: JwglClient.toNum(it.JD),
+      displayTerm: [it.JYXDXNMC, it.JYXDXQMC].filter(Boolean).join('·'),
+      planned: it.SFJHKC === '是',
+      hours: it.XSXXXX || '',
+      raw: it,
+    }));
+  }
+
+  /** 查询已选课程；当前项目只保留查询接口，不实现选课/退课。 */
+  async querySelectedCourses(xnm = '', xqm = ''): Promise<SelectedCourseItem[]> {
+    const path = '/xsxk/zzxkyzb_cxZzxkYzbChoosedDisplay.html';
+    const body = new URLSearchParams({ xkxnm: xnm, xkxqm: xqm });
+    const resp = await this.requestWithRetry(() => this.http.post(`${path}?gnmkdm=N253512`, body.toString(), {
+      headers: {
+        Cookie: this.cookieHeader(),
+        Referer: `${this.baseUrl}/xsxk/zzxkyzb_cxZzxkYzbIndex.html`,
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    }));
+    this.assertReadableResponse(resp);
+    const data: any = this.parseResponseData(resp);
+    const list: any[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+    return list.map((it: any) => ({
+      courseId: it.kch_id ?? it.kch,
+      classId: it.jxb_id ?? it.jxbid,
+      executionId: it.do_jxb_id ?? it.dojxbid,
+      title: it.kcmc ?? it.kchmc,
+      teacherId: this.matchText(String(it.jsxx ?? ''), /([0-9]+)\s*\//),
+      teacher: this.matchText(String(it.jsxx ?? ''), /\/([^/]+)\//) ?? it.jsmc ?? it.jsxm,
+      credit: this.toNumber(it.xf),
+      category: it.kklxmc ?? it.kclbmc,
+      capacity: this.toNumber(it.jxbrs),
+      selectedNumber: this.toNumber(it.yxzrs),
+      place: this.cleanHtml(String(it.jxdd ?? '')),
+      time: this.cleanHtml(String(it.sksj ?? '')).replace(/\s*<br\s*\/?>\s*/gi, '、'),
+      optional: it.zixf === 1 || it.zixf === '1' || it.zixf === true,
+      waiting: it.sxbj,
+      raw: it,
+    }));
+  }
+
+  /** 下载个人课表 PDF（只读；学期使用当前 USTS xqm 编码）。 */
+  async downloadSchedulePdf(xnm: string, xqm: string, name = '导出'): Promise<Buffer> {
+    const originTerm: Record<string, string> = { '3': '1', '12': '2', '16': '3' };
+    const displayTerm = originTerm[xqm] || xqm || '1';
+    const body = new URLSearchParams({
+      xm: name,
+      xnm,
+      xqm,
+      xnmc: `${xnm}-${Number(xnm) + 1}`,
+      xqmmc: displayTerm,
+      jgmc: 'undefined',
+      xxdm: '',
+      'xszd.sj': 'true',
+      'xszd.cd': 'true',
+      'xszd.js': 'true',
+      'xszd.jszc': 'false',
+      'xszd.jxb': 'true',
+      'xszd.xkbz': 'true',
+      'xszd.kcxszc': 'true',
+      'xszd.zhxs': 'true',
+      'xszd.zxs': 'true',
+      'xszd.khfs': 'true',
+      'xszd.xf': 'true',
+      'xszd.skfsmc': 'false',
+      kzlx: 'dy',
+    });
+    const policyPath = '/kbdy/bjkbdy_cxXnxqsfkz.html';
+    const filePath = '/kbcx/xskbcx_cxXsShcPdf.html';
+    const policy = await this.requestWithRetry(() => this.http.post(`${policyPath}?gnmkdm=N2151`, body.toString(), {
+      headers: this.formHeaders(`${this.baseUrl}${policyPath}`),
+    }));
+    this.assertReadableResponse(policy);
+    const file = await this.requestWithRetry(() => this.http.post(`${filePath}?doType=table`, body.toString(), {
+      headers: this.formHeaders(`${this.baseUrl}${filePath}`),
+      responseType: 'arraybuffer',
+    }));
+    const bytes = Buffer.from(file.data);
+    this.assertPdfResponse(file.status, bytes);
+    return bytes;
+  }
+
+  /** 下载成绩总表 PDF（只读；正方打印模块的多步生成链）。 */
+  async downloadAcademiaPdf(): Promise<Buffer> {
+    const params = { gnmkdm: 'N558020' };
+    const data: Record<string, string> = {
+      gsdygx: '10628-zw-mrgs', ids: '', bdykcxzDms: '', cytjkcxzDms: '',
+      cytjkclbDms: '', cytjkcgsDms: '', bjgbdykcxzDms: '', bjgbdyxxkcxzDms: '',
+      djksxmDms: '', cjbzmcDms: '', cjdySzxs: '', wjlx: 'pdf',
+    };
+    const post = async (path: string, form: Record<string, string>, ref = path): Promise<AxiosResponse> => {
+      const resp = await this.requestWithRetry(() => this.http.post(path, new URLSearchParams(form).toString(), {
+        params,
+        headers: this.formHeaders(`${this.baseUrl}${ref}`),
+      }));
+      this.assertReadableResponse(resp);
+      return resp;
+    };
+    await post('/bysxxcx/xscjzbdy_dyXscjzbView.html', params);
+    await post('/bysxxcx/xscjzbdy_dyCjdyszxView.html', { xh: '' });
+    const noType = { ...data };
+    delete noType.wjlx;
+    await post('/xtgl/bysxxcx/xscjzbdy_cxXsCount.html', noType);
+    await post('/bysxxcx/xscjzbdy_cxGswjlx.html', noType);
+    await post('/common/common_cxJwxtxx.html', params);
+    const fileResp = await post('/bysxxcx/xscjzbdy_dyList.html', noType);
+    const fileText = String(fileResp.data || '');
+    if (/错误|error_title/i.test(fileText)) throw new Error('成绩总表 PDF 生成失败');
+    const pdfPath = fileText.replace('#成功', '').replace(/"/g, '').trim().replace(/\\/g, '/');
+    if (!pdfPath) throw new Error('成绩总表 PDF 未返回下载路径');
+    await post('/xtgl/progress_cxProgressStatus.html', { key: 'score_print_processed', ...params });
+    const downloadUrl = /^https?:\/\//i.test(pdfPath) ? pdfPath : this.resolveDownloadUrl(pdfPath);
+    const download = await this.requestWithRetry(() => this.http.get(downloadUrl, {
+      headers: this.formHeaders(downloadUrl),
+      responseType: 'arraybuffer',
+      timeout: 32000,
+    }));
+    const bytes = Buffer.from(download.data);
+    this.assertPdfResponse(download.status, bytes);
+    return bytes;
+  }
+
+  private resolveDownloadUrl(value: string): string {
+    const clean = value.trim();
+    if (clean.startsWith('/')) return new URL(clean, `${this.baseUrl}/`).toString();
+    return new URL(clean, `${this.baseUrl}/`).toString();
+  }
+
+  private formHeaders(referer: string): Record<string, string> {
+    return {
+      Cookie: this.cookieHeader(),
+      Referer: referer,
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+    };
+  }
+
+  private assertPdfResponse(status: number, bytes: Buffer): void {
+    if (status >= 300 && status < 400) throw new Error('会话已失效，请重新运行 usts login');
+    const prefix = bytes.subarray(0, 4096).toString('utf8');
+    if (/用户登录|请先登录|登录超时|login_slogin/.test(prefix)) throw new Error('会话已失效，请重新运行 usts login');
+    if (status >= 400) throw new Error(`PDF 下载失败：HTTP ${status}`);
+    if (!bytes.subarray(0, 5).toString('ascii').startsWith('%PDF-')) throw new Error('服务端未返回有效 PDF 文件');
+  }
+
+  private assertReadableResponse(resp: AxiosResponse): void {
+    if (resp.status >= 300 && resp.status < 400) throw new Error('会话已失效，请重新运行 usts login');
+    const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+    if (/用户登录|请先登录|登录超时|login_slogin/.test(raw)) throw new Error('会话已失效，请重新运行 usts login');
+    if (resp.status >= 400) throw new Error(`查询失败：HTTP ${resp.status}`);
+  }
+
+  private parseResponseData(resp: AxiosResponse): any {
+    if (typeof resp.data !== 'string') return resp.data;
+    try { return JSON.parse(resp.data || '{}'); } catch { throw new Error('查询失败：服务端未返回有效 JSON'); }
+  }
+
+  private cleanHtml(value: string): string {
+    return value
+      .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<br\s*\/?>(\s*)/gi, ' ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private extractVisibleText(html: string): string[] {
+    return this.cleanHtml(html).split(/\s{2,}|\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 200);
+  }
+
+  private matchText(value: string, pattern: RegExp): string | undefined {
+    const m = value.match(pattern);
+    return m?.[1]?.trim() || undefined;
+  }
+
+  private toNumber(value: any): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const m = String(value).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+    if (!m) return undefined;
+    const n = Number(m[0]);
+    return Number.isFinite(n) ? n : undefined;
   }
 }
