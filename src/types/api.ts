@@ -2,10 +2,15 @@
  * 正方教务系统 API 类型定义
  */
 
+import type { AppErrorCode } from '../domain/errors';
+
+export type RawFields = Record<string, unknown>;
+
 // 登录响应
 export interface LoginResponse {
   success: boolean;
   message: string;
+  errorCode?: AppErrorCode;
   data?: {
     sessionId?: string;
     username?: string;
@@ -34,21 +39,21 @@ export interface ScoreItem {
 }
 
 // 考试信息（来源：kscx_cxXsksxx.html；字段因校而异，保留索引签名）
-export interface ExamItem extends Record<string, any> {
+export type ExamItem = RawFields & {
   courseName?: string; // 课程名称
   examTime?: string; // 考试时间
   location?: string; // 考试地点
   seat?: string; // 座位号
   examType?: string; // 考试类型
-}
+};
 
 // 选课名单项（来源：xkmdcx_cxXkmdcx.html；保留索引签名）
-export interface CourseListItem extends Record<string, any> {
+export type CourseListItem = RawFields & {
   courseName?: string;
   teacher?: string;
   credit?: string;
   courseCode?: string;
-}
+};
 
 // 课表项（来源：xskbcx_cxXsKb.html 的 sjkList）
 export interface ScheduleItem {
@@ -81,19 +86,11 @@ export interface ProfileInfo {
   email?: string;
 }
 
-// 会话状态
-export interface SessionState {
-  cookies: Map<string, string>;
-  sessionId?: string;
-  username?: string;
-  loginTime?: Date;
-}
-
 // 通用下拉选项（级联查询：学院/专业/班级等）
 export interface SelectOption {
   value: string; // id
   label: string; // 显示名
-  meta?: Record<string, any>; // 原始字段（班级条目含 bh 编号 / zymc / jgmc / njmc 等）
+  meta?: RawFields; // 原始字段（班级条目含 bh 编号 / zymc / jgmc / njmc 等）
 }
 
 // 班级课表查询参数（由级联选单解析而来）
@@ -143,7 +140,7 @@ export interface ClassScheduleView {
 }
 
 // 首页待办/通知
-export interface NotificationItem extends Record<string, any> {
+export interface NotificationItem {
   id?: string;
   title?: string;
   type?: string;
@@ -151,10 +148,11 @@ export interface NotificationItem extends Record<string, any> {
   createdAt?: string;
   unread?: boolean;
   url?: string;
+  raw?: RawFields;
 }
 
 // 学业情况页面中的 GPA/学分概览
-export interface GpaSummary extends Record<string, any> {
+export interface GpaSummary {
   gpa?: number;
   averageScore?: number;
   totalCredits?: number;
@@ -162,17 +160,18 @@ export interface GpaSummary extends Record<string, any> {
   rawText?: string[];
 }
 
-export interface AcademiaCategory extends Record<string, any> {
+export interface AcademiaCategory {
   id?: string;
   name: string;
   requiredCredits?: number;
   earnedCredits?: number;
   missingCredits?: number;
   detailAvailable?: boolean;
+  raw?: unknown;
 }
 
 // 学业分类明细课程（来源：xsxyqk_cxJxzxjhxfyqKcxx.html?gnmkdm=N105515 返回数组）
-export interface AcademiaCourseItem extends Record<string, any> {
+export interface AcademiaCourseItem {
   courseId?: string;     // KCH 课程号
   title?: string;        // KCMC 课程名称
   englishTitle?: string; // KCYWMC 英文名称
@@ -186,9 +185,10 @@ export interface AcademiaCourseItem extends Record<string, any> {
   displayTerm?: string;  // JYXDXNMC + JYXDXQMC 建议修读学年·学期
   planned?: boolean;     // SFJHKC 是否计划课程
   hours?: string;        // XSXXXX 学时组成
+  raw?: RawFields;
 }
 
-export interface AcademiaSummary extends Record<string, any> {
+export interface AcademiaSummary {
   studentId?: string;
   gpa?: number;
   plannedCourses?: number;
@@ -203,7 +203,7 @@ export interface AcademiaSummary extends Record<string, any> {
 }
 
 // 已选课程；与 courses 命令的课程名单保持不同模型
-export interface SelectedCourseItem extends Record<string, any> {
+export interface SelectedCourseItem {
   courseId?: string;
   classId?: string;
   executionId?: string;
@@ -218,4 +218,5 @@ export interface SelectedCourseItem extends Record<string, any> {
   time?: string;
   optional?: boolean;
   waiting?: string;
+  raw?: RawFields;
 }

@@ -9,10 +9,12 @@
  *   usts clsched -y 2026 -t 3 --jg 204 --zy 0107 --bh 测试班级
  */
 import inquirer from 'inquirer';
-import { JwglClient } from '../lib/client';
+import { ClassScheduleGateway } from '../application/ports/jwgl-gateway';
 import { ClassScheduleQuery, ClassScheduleView, SelectOption } from '../types/api';
-import { header, info, error, success } from '../lib/logger';
-import { ensureSession, resolveTerm, termLabel } from './_shared';
+import { header, info, success } from '../lib/logger';
+import { ensureSession, resolveTerm, termLabel, reportCommandError } from './_shared';
+import { currentTerm } from '../domain/term';
+import { AppError, AppErrorCode } from '../domain/errors';
 
 const DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const XQM_CHOICES = [
@@ -20,6 +22,11 @@ const XQM_CHOICES = [
   { name: '第二学期（春）', value: '12' },
   { name: '第三学期（小学期）', value: '16' },
 ];
+
+function selectionError(message: string, code: AppErrorCode = 'CONFIGURATION_ERROR'): null {
+  reportCommandError(new AppError(code, message), message);
+  return null;
+}
 
 function yearChoices(defXnm: string): { name: string; value: string }[] {
   const def = Number(defXnm);
@@ -43,7 +50,7 @@ function pick(opt: string | undefined, list: SelectOption[], extraKeys: string[]
 
 /** 交互式：复刻网页级联选单 */
 async function interactiveCascade(
-  client: JwglClient,
+  client: ClassScheduleGateway,
   view: ClassScheduleView,
   defXnm: string,
   defXqm: string,
@@ -60,8 +67,7 @@ async function interactiveCascade(
 
   const majors = await client.getMajorsByCollege(t.college);
   if (!majors.length) {
-    console.error(error('该学院暂无专业'));
-    return null;
+    return selectionError('该学院暂无专业', 'REMOTE_SERVER_ERROR');
   }
   const m = await inquirer.prompt([{ type: 'list', name: 'v', message: '选择专业', choices: majors.map((o) => ({ name: o.label, value: o.value })) }]);
   const major = majors.find((o) => o.value === m.v);
@@ -69,8 +75,7 @@ async function interactiveCascade(
 
   const classes = await client.getClassesByMajor(t.college, m.v, t.grade);
   if (!classes.length) {
-    console.error(error('该专业该年级暂无班级'));
-    return null;
+    return selectionError('该专业该年级暂无班级', 'REMOTE_SERVER_ERROR');
   }
   const c = await inquirer.prompt([{ type: 'list', name: 'v', message: '选择班级', choices: classes.map((o) => ({ name: o.label, value: o.value })) }]);
   const cls = classes.find((o) => o.value === c.v);
@@ -79,13 +84,13 @@ async function interactiveCascade(
   return {
     xnm: t.xnm, xqm: t.xqm,
     xqhId: t.campus, njdmId: t.grade, jgId: t.college, zyhId: m.v, bhId: cls.value,
-    bh: cls.meta?.bh || '', bj: cls.label, zymc: major.label, jgmc: college.label, njmc: t.grade,
+    bh: String(cls.meta?.bh || ''), bj: cls.label, zymc: major.label, jgmc: college.label, njmc: t.grade,
   };
 }
 
 /** CLI 模式：按标志解析 学院→专业→班级 */
 async function resolveByFlags(
-  client: JwglClient,
+  client: ClassScheduleGateway,
   view: ClassScheduleView,
   opts: { xnm?: string; xqm?: string; xqh?: string; nj?: string; jg?: string; zy?: string; bh?: string },
   xnm: string,
@@ -93,61 +98,55 @@ async function resolveByFlags(
 ): Promise<ClassScheduleQuery | null> {
   const college = opts.jg ? pick(opts.jg, view.colleges) : null;
   if (opts.jg && !college) {
-    console.error(error(`未找到学院：${opts.jg}`));
-    return null;
+    return selectionError(`未找到学院：${opts.jg}`);
   }
   if (!college) {
-    console.error(error('请用 --jg 指定学院，或去掉 --bh 走交互式选择'));
-    return null;
+    return selectionError('请用 --jg 指定学院，或去掉 --bh 走交互式选择');
   }
   const campus = opts.xqh ? pick(opts.xqh, view.campuses) : null;
   if (opts.xqh && !campus) {
-    console.error(error(`未找到校区：${opts.xqh}`));
-    return null;
+    return selectionError(`未找到校区：${opts.xqh}`);
   }
   const nj = opts.nj || view.defaultGrade || '';
   const majors = await client.getMajorsByCollege(college.value);
   const major = opts.zy ? pick(opts.zy, majors, ['zyh']) : null;
   if (opts.zy && !major) {
-    console.error(error(`未找到专业：${opts.zy}`));
-    return null;
+    return selectionError(`未找到专业：${opts.zy}`);
   }
   if (!major) {
-    console.error(error('请用 --zy 指定专业'));
-    return null;
+    return selectionError('请用 --zy 指定专业');
   }
   const classes = await client.getClassesByMajor(college.value, major.value, nj);
   const cls = pick(opts.bh, classes, ['bh']);
   if (!cls) {
-    console.error(error(`未找到班级：${opts.bh}`));
-    return null;
+    return selectionError(`未找到班级：${opts.bh}`);
   }
   return {
     xnm, xqm,
     xqhId: campus ? campus.value : view.defaultCampus || '',
     njdmId: nj, jgId: college.value, zyhId: major.value, bhId: cls.value,
-    bh: cls.meta?.bh || '', bj: cls.label, zymc: major.label, jgmc: college.label, njmc: nj,
+    bh: String(cls.meta?.bh || ''), bj: cls.label, zymc: major.label, jgmc: college.label, njmc: nj,
   };
 }
 
 export async function clschedCommand(
-  client: JwglClient,
+  client: ClassScheduleGateway,
   opts: { xnm?: string; xqm?: string; xqh?: string; nj?: string; jg?: string; zy?: string; bh?: string },
 ): Promise<void> {
   if (!(await ensureSession(client))) return;
   const term = resolveTerm(opts);
   const xnm = term.xnm;
-  const xqm = term.xqm || JwglClient.currentTerm().xqm; // 课表必须落到具体学期
+  const xqm = term.xqm || currentTerm().semester; // 课表必须落到具体学期
 
   let view: ClassScheduleView;
   try {
     view = await client.getBjkbdyOptions();
   } catch (e: any) {
-    console.error(error(e?.message || '解析班级课表选项失败'));
+    reportCommandError(e, '解析班级课表选项失败');
     return;
   }
   if (!view.colleges.length) {
-    console.error(error('未解析到学院列表，班级课表暂不可用'));
+    reportCommandError(new AppError('PROTOCOL_CHANGED', '未解析到学院列表，班级课表暂不可用'));
     return;
   }
 
@@ -182,6 +181,6 @@ export async function clschedCommand(
     for (const p of practice) console.log(info(`实践课：${p}`));
     console.log(success(`共 ${timed.length + untimed.length} 门课` + (practice.length ? ` · ${practice.length} 门实践课` : '')));
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败');
   }
 }

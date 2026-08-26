@@ -1,10 +1,11 @@
-import { JwglClient } from '../lib/client';
-import { header, info, error } from '../lib/logger';
-import { printJson, printTable } from '../lib/format';
-import { ensureSession } from './_shared';
+import { AcademiaGateway } from '../application/ports/jwgl-gateway';
+import { header, info } from '../lib/logger';
+import { printJsonEnvelope, printTable } from '../lib/format';
+import { ensureSession, reportCommandError } from './_shared';
+import { AppError } from '../domain/errors';
 
 export async function academiaCommand(
-  client: JwglClient,
+  client: AcademiaGateway,
   opts: { json?: boolean; category?: string } = {},
 ): Promise<void> {
   if (!(await ensureSession(client))) return;
@@ -16,12 +17,16 @@ export async function academiaCommand(
       const kw = opts.category.trim();
       const match = result.categories.find((c) => c.name.includes(kw));
       if (!match || !match.id) {
-        console.error(error(`未找到匹配的分类「${kw}」。可用分类：\n  ${result.categories.map((c) => c.name).join('\n  ')}`));
+        reportCommandError(
+          new AppError('CONFIGURATION_ERROR', `未找到匹配的分类「${kw}」。可用分类：\n  ${result.categories.map((c) => c.name).join('\n  ')}`),
+          '分类参数错误',
+          { json: opts.json, command: 'academia' },
+        );
         return;
       }
       const courses = await client.queryAcademiaCategory(match.id);
       if (opts.json) {
-        printJson({ category: match.name, ...match, courses });
+        printJsonEnvelope('academia', { category: match, courses });
         return;
       }
       console.log(header(`学业情况 · ${match.name}`));
@@ -51,7 +56,7 @@ export async function academiaCommand(
     }
 
     if (opts.json) {
-      printJson(result);
+      printJsonEnvelope('academia', result);
       return;
     }
     console.log(header(`学业情况${result.studentId ? `   ${result.studentId}` : ''}`));
@@ -82,6 +87,6 @@ export async function academiaCommand(
       ]),
     );
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败', { json: opts.json, command: 'academia' });
   }
 }

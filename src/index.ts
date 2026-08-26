@@ -16,9 +16,21 @@ import { schedulePdfCommand } from './commands/schedule-pdf';
 import { academiaPdfCommand } from './commands/academia-pdf';
 import { interactiveShell } from './commands/interactive';
 import { loadEnv } from './lib/env';
+import { DEFAULT_BASE_URL, loadConfig } from './config/config';
+import { error, warning } from './lib/logger';
+import { errorMessage, exitCodeForError } from './domain/errors';
 
-const env = loadEnv();
-const baseUrl = env.USTS_BASE_URL || 'https://jwgl.usts.edu.cn/jwglxt';
+loadEnv();
+let baseUrl = DEFAULT_BASE_URL;
+let startupError: unknown;
+let startupWarnings: string[] = [];
+try {
+  const config = loadConfig();
+  baseUrl = config.baseUrl;
+  startupWarnings = config.warnings;
+} catch (cause) {
+  startupError = cause;
+}
 
 const program = new Command();
 
@@ -28,31 +40,32 @@ program
   .version('1.0.0')
   .addHelpText('after', `
   快速开始:
-    1) usts login                首次使用先登录（会话保存到 .session.json）
+    1) usts login                首次使用先登录（会话保存到用户状态目录）
     2) usts scores               查询当前学期成绩
     3) usts profile              查看当前登录的个人信息
 
   通用学期参数（scores/exams/courses/schedule 可用）:
     -y, --xnm <学年>   学年，如 2025
     -t, --xqm <学期>   3=第一学期, 12=第二学期, 16=第三学期
-    缺省时自动取当前学期（9月~次年1月为第一学期；2~8月为第二学期）。
+    缺省时自动取当前学期（8月~次年1月为第一学期；2~7月为第二学期）。
 
   更多用法见各命令的 --help，例如: usts scores --help`);
 
 program
   .command('login')
-  .description('登录教务系统（纯脚本 RSA + 双 POST 重试，无需浏览器；会话持久化到 .session.json）')
+  .description('登录教务系统（纯脚本 RSA + 双 POST 重试，无需浏览器；会话安全持久化）')
   .addHelpText('after', `
   示例:
     usts login                  自动用 .env 中的 USTS_USERNAME/USTS_PASSWORD 登录
     usts login                  若 .env 未配置，则交互式输入学号与密码
   说明:
-    登录成功后会话会保存到 .session.json，后续查询命令可免登录直接使用。
+    登录成功后会话会保存到用户状态目录，后续查询命令可免登录直接使用。
     也可通过环境变量 USTS_COOKIES 直接注入浏览器复制的会话 Cookie 跳过登录。`)
   .action(async () => {
     const client = new JwglClient(baseUrl);
     const ok = await loginCommand(client);
-    process.exit(ok ? 0 : 1);
+    if (ok) process.exitCode = 0;
+    else if (!process.exitCode) process.exitCode = 1;
   });
 
 // 学期选项（成绩/考试/课表/选课名单共用）
@@ -213,8 +226,14 @@ program
   });
 
 // 无子命令时进入交互式终端；指定子命令（如 usts scores）则按原 CLI 模式运行
-if (process.argv.length <= 2) {
-  interactiveShell(baseUrl).then(() => process.exit(0));
-} else {
-  program.parseAsync(process.argv);
+async function main(): Promise<void> {
+  if (startupError) throw startupError;
+  for (const message of startupWarnings) console.error(warning(message));
+  if (process.argv.length <= 2) await interactiveShell(baseUrl);
+  else await program.parseAsync(process.argv);
 }
+
+void main().catch((cause) => {
+  process.exitCode = exitCodeForError(cause);
+  console.error(error(errorMessage(cause, '程序异常退出')));
+});

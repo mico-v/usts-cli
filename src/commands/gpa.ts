@@ -1,14 +1,14 @@
-import { JwglClient } from '../lib/client';
-import { header, info, error } from '../lib/logger';
-import { printJson, printTable } from '../lib/format';
-import { ensureSession } from './_shared';
+import { GpaGateway } from '../application/ports/jwgl-gateway';
+import { header, info } from '../lib/logger';
+import { printJsonEnvelope, printTable } from '../lib/format';
+import { ensureSession, reportCommandError } from './_shared';
 
-export async function gpaCommand(client: JwglClient, opts: { json?: boolean } = {}): Promise<void> {
+export async function gpaCommand(client: GpaGateway, opts: { json?: boolean } = {}): Promise<void> {
   if (!(await ensureSession(client))) return;
   try {
     const result = await client.queryGpa();
     if (opts.json) {
-      printJson(result);
+      printJsonEnvelope('gpa', result);
       return;
     }
     console.log(header('学业成绩概览'));
@@ -25,6 +25,6 @@ export async function gpaCommand(client: JwglClient, opts: { json?: boolean } = 
     }
     printTable(['项目', '数值'], rows);
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败', { json: opts.json, command: 'gpa' });
   }
 }

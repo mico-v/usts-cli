@@ -2,16 +2,17 @@
  * 登录命令
  *
  * 登录策略（按优先级）：
- *   1. 已有持久化会话（.session.json）且仍有效 -> 直接复用
+ *   1. 已有安全持久化会话且仍有效 -> 直接复用
  *   2. 环境变量 USTS_COOKIES 提供已认证 Cookie -> 注入并校验
  *   3. 账号密码纯脚本登录（经典正方 RSA 加密 + 双 POST 重试，无需浏览器）
  * 出现验证码时无法自动处理，提示改用 USTS_COOKIES 或 npm run capture。
  */
 import inquirer from 'inquirer';
-import { JwglClient } from '../lib/client';
+import { AuthGateway } from '../application/ports/jwgl-gateway';
 import { success, error, info } from '../lib/logger';
+import { AppError, exitCodeForError } from '../domain/errors';
 
-export async function loginCommand(client: JwglClient): Promise<boolean> {
+export async function loginCommand(client: AuthGateway): Promise<boolean> {
   // 1. 复用已持久化的会话
   if (client.restoreSession()) {
     const valid = await client.validateSession();
@@ -19,14 +20,14 @@ export async function loginCommand(client: JwglClient): Promise<boolean> {
       console.log(success('已恢复上次登录的会话'));
       return true;
     }
-    info('上次会话已失效，重新登录...');
+    console.log(info('上次会话已失效，重新登录...'));
   }
 
   // 2. 直接注入浏览器复制的会话 Cookie
   const cookies = process.env.USTS_COOKIES;
   if (cookies && cookies.trim()) {
     client.setCookies(cookies.trim());
-    info('已载入会话 Cookie，正在校验...');
+    console.log(info('已载入会话 Cookie，正在校验...'));
     if (await client.validateSession()) {
       client.saveSession();
       console.log(success('使用已提供的 Cookie 登录成功'));
@@ -61,7 +62,7 @@ export async function loginCommand(client: JwglClient): Promise<boolean> {
     password = answers.password;
   }
 
-  info('正在通过账号密码登录（纯脚本 RSA + 双 POST 重试）...');
+  console.log(info('正在通过账号密码登录（纯脚本 RSA + 双 POST 重试）...'));
   const result = await client.loginViaScript(username!, password!);
 
   if (result.success) {
@@ -69,5 +70,6 @@ export async function loginCommand(client: JwglClient): Promise<boolean> {
     return true;
   }
   console.log(error(result.message));
+  process.exitCode = exitCodeForError(new AppError(result.errorCode || 'UNKNOWN_ERROR', result.message));
   return false;
 }

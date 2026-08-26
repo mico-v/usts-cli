@@ -1,14 +1,14 @@
-import { JwglClient } from '../lib/client';
-import { header, info, error } from '../lib/logger';
-import { printJson, printTable } from '../lib/format';
-import { ensureSession } from './_shared';
+import { NotificationsGateway } from '../application/ports/jwgl-gateway';
+import { header, info } from '../lib/logger';
+import { printJsonEnvelope, printTable } from '../lib/format';
+import { ensureSession, reportCommandError } from './_shared';
 
-export async function notificationsCommand(client: JwglClient, opts: { json?: boolean } = {}): Promise<void> {
+export async function notificationsCommand(client: NotificationsGateway, opts: { json?: boolean } = {}): Promise<void> {
   if (!(await ensureSession(client))) return;
   try {
     const items = await client.queryNotifications();
     if (opts.json) {
-      printJson(items);
+      printJsonEnvelope('notifications', items);
       return;
     }
     console.log(header('通知 / 待办'));
@@ -22,6 +22,6 @@ export async function notificationsCommand(client: JwglClient, opts: { json?: bo
       { maxColWidth: 32 },
     );
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败', { json: opts.json, command: 'notifications' });
   }
 }

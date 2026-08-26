@@ -1,8 +1,8 @@
-import { JwglClient } from '../lib/client';
-import { header, info, error, success } from '../lib/logger';
-import { ensureSession } from './_shared';
+import { ProfileGateway } from '../application/ports/jwgl-gateway';
+import { header, info, success } from '../lib/logger';
+import { ensureSession, reportCommandError } from './_shared';
 
-export async function profileCommand(client: JwglClient): Promise<void> {
+export async function profileCommand(client: ProfileGateway): Promise<void> {
   if (!(await ensureSession(client))) return;
   console.log(header('个人信息'));
   try {
@@ -21,6 +21,6 @@ export async function profileCommand(client: JwglClient): Promise<void> {
     line('邮箱', p.email);
     console.log(success('信息获取完成'));
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败');
   }
 }

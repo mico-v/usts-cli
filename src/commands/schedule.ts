@@ -1,10 +1,10 @@
-import { JwglClient } from '../lib/client';
-import { header, info, error, success } from '../lib/logger';
-import { ensureSession, termLabel, resolveTerm } from './_shared';
+import { ScheduleGateway } from '../application/ports/jwgl-gateway';
+import { header, info, success } from '../lib/logger';
+import { ensureSession, termLabel, resolveTerm, reportCommandError } from './_shared';
 
 const DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-export async function scheduleCommand(client: JwglClient, opts: { xnm?: string; xqm?: string }): Promise<void> {
+export async function scheduleCommand(client: ScheduleGateway, opts: { xnm?: string; xqm?: string }): Promise<void> {
   if (!(await ensureSession(client))) return;
   const { xnm, xqm } = resolveTerm(opts);
   console.log(header(`个人课表查询   ${termLabel(xnm, xqm)}`));
@@ -42,6 +42,6 @@ export async function scheduleCommand(client: JwglClient, opts: { xnm?: string; 
     }
     console.log(success(`共 ${items.length} 条课程记录`));
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败');
   }
 }

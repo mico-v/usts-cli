@@ -76,13 +76,13 @@
 - **纯脚本登录已实现为 `loginViaScript()`**：GET 登录页 → GET 公钥 → RSA 加密 → POST（失败则同会话重试一次）。登录后 profile/scores/schedule 实测均可正常取数。**不再需要 Puppeteer/Chrome**。
 - **WAF 对短时间内的重复请求做限流**：连续多次登录/查询后会出现 `net::ERR_CONNECTION_CLOSED`（连接层直接重置）。**等待约 30~60 秒后重试即可恢复**。`loginViaScript` 已对连接类错误做最多 3 次退避重试。
 - **验证码**（`yzcskz=3`，连续失败 3 次触发）无法用脚本处理：需 `USTS_COOKIES` 注入或 `npm run capture` 人工登录。
-- 登录后把会话 Cookie 持久化到 `.session.json`，后续查询用 axios 复用该 Cookie（GET 视图页返回 200/非登录页，会话有效）。
+- 登录后把会话 Cookie 持久化到用户状态目录的 `session.json`（目录 `0700`、文件 `0600`，旧 `.session.json` 自动迁移），后续查询复用同一 Cookie Jar。
 
 ## 5. 实现注意事项
 
-- `JwglClient` 已实现：`loginViaScript()`（纯脚本 RSA + 双 POST 重试登录，无需浏览器）、`restoreSession()`/`saveSession()`（`.session.json` 会话持久化）、`validateSession()`，以及 `postGrid`/`querySchedule`/`queryClassSchedule`/`getBjkbdyOptions` 等查询方法。
+- `JwglClient` 已实现：`loginViaScript()`（纯脚本 RSA + 双 POST 重试登录，无需浏览器）、安全 `SessionStore`/`CookieJar`、`validateSession()`，以及 `postGrid`/`querySchedule`/`queryClassSchedule`/`getBjkbdyOptions` 等查询方法。
 - **会话校验修正**：直接 GET 视图页（如 `xsxxwh_cxXsxx.html`）即使会话有效也常返回「错误提示」页（缺 `gnmkdm`/参数），因此 `validateSession` 只以「302 重定向到登录页 / 出现『请先登录』『登录超时』 / 登录页 HTML」判定失效，不把「错误提示」当作失效。
-- 后续查询命令：登录/恢复会话后，用同一 cookie jar **POST** 到各数据 Action（见第 3 节），附 `gnmkdm` 模块参数，解析返回的 JSON。GET 视图页仅用于校验会话，不用于取数据。
+- 后续查询命令：恢复本地会话后直接用同一 Cookie Jar **POST** 到数据 Action（见第 3 节），由业务响应识别会话过期，避免每条命令额外发送预检请求。GET 视图页只在登录复用校验时使用。
 - 验证码仅在连续失败触发；WAF 限流期间暂停请求、稍后重试即可，无需处理验证码。
 
 ## 6. 已实现的 CLI 查询命令（已实测 ✅）
@@ -143,7 +143,7 @@
 - 缺省学期：8 月网页缺省 `xnm=今年, xqm='3'`（即将到来的秋季学期），`currentTerm()` 已对齐；只给 `-y` 时学期留空 = 该学年全部学期（与网页一致）。
 
 ### 7.5 抓包产物
-- `captures/*.html`：每页最终渲染 DOM；`captures/network.jsonl`：全部 XHR 请求体+响应体；`captures/summary.md`：去重接口清单。均已 gitignore（含个人真实数据）。
+- `captures/*.html`：每页最终渲染 DOM；`captures/network.jsonl`：全部 XHR 请求体+响应体；`captures/summary.md`：去重接口清单。均已 gitignore，抓包目录为 `0700`、文件为 `0600`（含个人真实数据）。
 
 ### 7.6 班级课表（bjkbdy，N214505，2026-08 实测）
 - 视图页：`GET /kbdy/bjkbdy_cxBjkbdyIndex.html?gnmkdm=N214505`。**学院/校区/年级/培养层次等选单选项内嵌在 HTML 里**（chosen-select，`display:none`），需按 `name="jg_id"` 等定位后截取到 `</select>` 解析 `<option>`。

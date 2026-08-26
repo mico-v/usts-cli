@@ -1,18 +1,43 @@
-import { JwglClient } from '../lib/client';
 import { error } from '../lib/logger';
+import { AppError, errorMessage, exitCodeForError, isAppError } from '../domain/errors';
+import { currentTerm } from '../domain/term';
+import { SessionGateway } from '../application/ports/jwgl-gateway';
 
-/** 恢复并校验会话；失败则提示登录并返回 false */
-export async function ensureSession(client: JwglClient): Promise<boolean> {
+/** 只恢复本地会话；业务请求负责识别过期，避免每条命令多一次远端预检。 */
+export async function ensureSession(client: SessionGateway): Promise<boolean> {
   if (!client.restoreSession()) {
     console.error(error('未找到会话，请先运行 usts login 登录'));
-    return false;
-  }
-  const ok = await client.validateSession();
-  if (!ok) {
-    console.error(error('会话已失效，请重新运行 usts login 登录'));
+    process.exitCode = 3;
     return false;
   }
   return true;
+}
+
+/** 统一 CLI 错误输出和退出码；兼容尚未迁移为 AppError 的旧错误。 */
+export function reportCommandError(
+  value: unknown,
+  fallback = '操作失败',
+  options: { json?: boolean; command?: string } = {},
+): void {
+  let normalized = value;
+  if (!isAppError(value)) {
+    const message = errorMessage(value, fallback);
+    if (/会话已失效|请先登录|未找到会话/.test(message)) normalized = new AppError('SESSION_EXPIRED', message, { cause: value });
+    else if (/验证码/.test(message)) normalized = new AppError('CAPTCHA_REQUIRED', message, { cause: value });
+    else if (/HTTP \d+|服务端|远端/.test(message)) normalized = new AppError('REMOTE_SERVER_ERROR', message, { cause: value });
+    else normalized = new AppError('UNKNOWN_ERROR', message, { cause: value });
+  }
+  process.exitCode = exitCodeForError(normalized);
+  if (options.json) {
+    const appError = normalized as AppError;
+    console.error(JSON.stringify({
+      schemaVersion: 1,
+      command: options.command || 'unknown',
+      error: { code: appError.code, message: errorMessage(appError, fallback), retryable: appError.retryable },
+    }, null, 2));
+  } else {
+    console.error(error(errorMessage(normalized, fallback)));
+  }
 }
 
 /** 学期代码 -> 中文名（短，用于“第X学期”中的 X） */
@@ -53,8 +78,8 @@ export function termLabel(xnm: string, xqm: string): string {
  *   - 给了 -y 和 -t → 按给定学期
  */
 export function resolveTerm(opts: { xnm?: string; xqm?: string }): { xnm: string; xqm: string } {
-  const def = JwglClient.currentTerm();
-  const xnm = opts.xnm || def.xnm;
-  const xqm = opts.xqm !== undefined ? opts.xqm : (opts.xnm ? '' : def.xqm);
+  const def = currentTerm();
+  const xnm = opts.xnm || def.academicYear;
+  const xqm = opts.xqm !== undefined ? opts.xqm : (opts.xnm ? '' : def.semester);
   return { xnm, xqm };
 }

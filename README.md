@@ -28,11 +28,12 @@
 
 ## 安装与构建
 
-环境要求：Node.js 18+。
+环境要求：Node.js 22.12+（与 Commander 15 的运行时要求一致）。
 
 ```bash
 npm install        # 安装依赖
 npm run build      # 编译 TypeScript 到 dist/
+npm run check      # 类型检查、架构规则与自动化测试
 ```
 
 > **登录不依赖浏览器**：账号密码登录是纯脚本（RSA + 双 POST 重试），无需安装 Puppeteer/Chrome。`puppeteer*` 仅在 `devDependencies`，只服务于开发用的 `npm run capture` 抓包工具；生产/无浏览器环境可按需 `npm install --omit=dev` 跳过它。
@@ -63,15 +64,20 @@ USTS_PASSWORD=你的密码
 
 # 可选：直接注入浏览器复制的会话 Cookie（见“会话与凭证”）
 # USTS_COOKIES=JSESSIONID=xxxx; __jsluid_s=xxxx
+
+# 可选：覆盖跨平台会话状态目录
+# USTS_STATE_DIR=/path/to/private/state
 ```
 
 `.env` 中的账号密码仅在运行 `usts login` 时使用，不会外发到除教务系统以外的任何地址。
+
+出于凭证安全，默认只允许 HTTPS 的 `jwgl.usts.edu.cn`。本地协议测试如需自定义主机，必须显式设置 `USTS_ALLOW_CUSTOM_HOST=1`；使用明文 HTTP 还需额外设置 `USTS_ALLOW_INSECURE_HTTP=1`。
 
 ---
 
 ## 登录
 
-首次使用需先登录一次，会话会持久化到 `.session.json`，之后查询命令可直接复用，无需重复登录。
+首次使用需先登录一次，会话会持久化到操作系统用户状态目录，之后查询命令可直接复用，无需重复登录。Linux 默认路径为 `~/.local/state/usts-cli/session.json`；旧版项目目录 `.session.json` 会自动迁移。
 
 ```bash
 usts login
@@ -79,7 +85,7 @@ usts login
 
 登录流程（按优先级自动选择）：
 
-1. 若 `.session.json` 中已有**有效**会话 → 直接复用。
+1. 若用户状态目录中已有**有效**会话 → 直接复用。
 2. 若设置了环境变量 `USTS_COOKIES` → 注入并校验该 Cookie。
 3. 否则通过**账号密码纯脚本登录**：经典正方 RSA 加密 + 「双 POST 重试」（`loginViaScript`）。
 
@@ -141,7 +147,7 @@ usts scores --help     # 单命令帮助
 usts login
 ```
 
-登录并把会话保存到 `.session.json`。详见[登录](#登录)。
+登录并把会话安全保存到用户状态目录。详见[登录](#登录)。
 
 ### 2. scores（成绩查询）
 
@@ -231,6 +237,8 @@ usts selected-courses -y 2025 -t 3
 
 `academia --category` 按分类名（子串匹配）拉取该分类的课程明细（课程号/成绩/绩点/建议学期等）；汇总节点（如「语言类」）无直接明细，需查其叶子分类（如「大学英语」）。`scores` 主接口无数据时自动回退备用接口。`selected-courses` 与 `courses` 不是同一个功能：前者查询已选课程详情（教学班、容量、已选人数、地点等），后者查询课程名单。上述命令均为只读，不执行选课或退课操作。`zfn_api` 使用的旧学期参数 `1/2` 不适用于本项目，当前 USTS 仍使用 `xqm=3/12/16`。
 
+支持 `--json` 的命令使用版本化输出信封：`{schemaVersion, command, data, meta?, warnings}`；JSON 错误写入 `stderr`。完整契约和退出码见 [`docs/contracts/cli.md`](docs/contracts/cli.md)。
+
 ---
 
 ### 9. PDF 下载（只读）
@@ -242,7 +250,10 @@ usts academia-pdf -o ./transcript.pdf
 
 默认拒绝覆盖已有文件，使用 `--force` 才会覆盖。PDF 可能包含个人课表、成绩和学籍信息，请自行选择安全的输出路径。实现已接入正方打印模块的多步只读请求链，并校验 `%PDF-` 文件头；不同时间段/模块权限可能导致服务器拒绝生成文件。
 
+## 会话与凭证
 
+- **存储位置**：Linux 默认 `~/.local/state/usts-cli/session.json`；可用 `USTS_STATE_DIR` 覆盖。目录权限为 `0700`，文件权限为 `0600`。
+- **兼容迁移**：旧版当前目录 `.session.json` 仍可读取，成功读取后迁移到新位置并尽力收紧旧文件权限。
 - **有效期**：会话由教务系统控制，一般数小时至数天；过期后查询会提示「会话已失效，请重新运行 usts login」。
 - **手动注入 Cookie**：如果你已在浏览器登录，可把请求头里的 `Cookie` 整串复制到环境变量 `USTS_COOKIES`，运行 `usts login` 即可校验并复用，无需账号密码：
 

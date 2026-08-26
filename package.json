@@ -8,10 +8,23 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "node tools/lint.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 tests/*.test.js",
+    "check": "npm run typecheck && npm run lint && npm test",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "capture": "node tools/capture-browser.mjs"
+    "capture": "node tools/capture-browser.mjs",
+    "prepack": "npm run build"
   },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "WEB_ARCHITECTURE.md"
+  ],
   "keywords": [
     "zhifang",
     "jwgl",

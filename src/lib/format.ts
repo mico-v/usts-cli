@@ -1,6 +1,8 @@
 // 简单的命令行表格输出工具
 // 按“终端显示宽度”对齐：全角/中日韩字符占 2 列，兼容 ANSI 颜色码，超出列宽按显示宽度截断。
 
+import { sanitizeTerminalText } from '../shared/sanitize';
+
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 /** 去除 ANSI 颜色码 */
@@ -44,7 +46,7 @@ export function printTable(headers: string[], rows: (string | undefined)[][], op
   const maxColWidth = opts.maxColWidth ?? 24;
   const cols = headers.length;
   const widths: number[] = new Array(cols).fill(0);
-  const norm = (s: string | undefined) => (s === undefined || s === null ? '' : String(s));
+  const norm = (s: string | undefined) => sanitizeTerminalText(s === undefined || s === null ? '' : String(s));
   const normRows = rows.map((r) => headers.map((_, i) => truncateWidth(norm(r[i]), maxColWidth)));
   headers.forEach((h, i) => (widths[i] = Math.max(widths[i], displayWidth(truncateWidth(h, maxColWidth)))));
   normRows.forEach((r) => r.forEach((c, i) => (widths[i] = Math.max(widths[i], displayWidth(c)))));
@@ -62,5 +64,20 @@ export function printTable(headers: string[], rows: (string | undefined)[][], op
 
 /** 输出机器可读 JSON；不要在调用前打印带 ANSI 的标题或提示。 */
 export function printJson(value: unknown): void {
-  console.log(JSON.stringify(value, (_key, item) => item === undefined ? null : item, 2));
+  console.log(JSON.stringify(value, (key, item) => {
+    if (key === 'raw') return undefined;
+    return item === undefined ? null : item;
+  }, 2));
+}
+
+export interface JsonEnvelope<T> {
+  schemaVersion: 1;
+  command: string;
+  data: T;
+  meta?: Record<string, unknown>;
+  warnings: string[];
+}
+
+export function printJsonEnvelope<T>(command: string, data: T, meta?: Record<string, unknown>): void {
+  printJson({ schemaVersion: 1, command, data, ...(meta ? { meta } : {}), warnings: [] } satisfies JsonEnvelope<T>);
 }

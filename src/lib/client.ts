@@ -1,55 +1,68 @@
 // 正方教务系统 API 客户端
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
-import { SessionState, LoginResponse, ScoreItem, ScheduleItem, ProfileInfo, ExamItem, CourseListItem, SelectOption, ClassScheduleQuery, ClassScheduleItem, ClassScheduleView, NotificationItem, GpaSummary, AcademiaSummary, AcademiaCategory, AcademiaCourseItem, SelectedCourseItem } from '../types/api';
+import { AxiosInstance, AxiosResponse } from 'axios';
+import { LoginResponse, ScoreItem, ScheduleItem, ProfileInfo, ExamItem, CourseListItem, SelectOption, ClassScheduleQuery, ClassScheduleItem, ClassScheduleView, NotificationItem, GpaSummary, AcademiaSummary, AcademiaCategory, AcademiaCourseItem, SelectedCourseItem } from '../types/api';
+import { BaseUrlPolicy, assertSameOriginUrl, normalizeBaseUrl } from '../config/config';
+import { AppError, errorMessage, isAppError } from '../domain/errors';
+import { currentTerm } from '../domain/term';
+import { CookieJar } from '../infrastructure/http/cookie-jar';
+import { createHttpClient, executeWithRetry, OperationEffect } from '../infrastructure/http/transport';
+import { FileSessionStore, SessionStore } from '../infrastructure/session/file-session-store';
+import { cleanHtml, extractVisibleText, matchText, parseJsonValue, recordArray, toNumber } from '../infrastructure/jwgl/value';
+import { mapAcademiaCourseItem, mapClassScheduleItem, mapScheduleItem, mapScoreItem, mapSelectedCourseItem } from '../infrastructure/jwgl/mappers';
+import { assertPdfResponse, assertReadableResponse } from '../infrastructure/jwgl/response-policy';
+import { encryptPassword } from '../infrastructure/jwgl/rsa';
 
-const SESSION_FILE = path.resolve(process.cwd(), '.session.json');
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 export class JwglClient {
-  private session: SessionState;
+  private session: { username?: string; loginTime?: Date };
+  private cookies: CookieJar;
+  private readonly sessionStore: SessionStore;
   private baseUrl: string;
+  private cookieUrl: string;
   private http: AxiosInstance;
 
-  constructor(baseUrl: string = 'https://jwgl.usts.edu.cn/jwglxt') {
-    this.baseUrl = baseUrl;
-    this.session = { cookies: new Map() };
+  constructor(
+    baseUrl: string = 'https://jwgl.usts.edu.cn/jwglxt',
+    options: BaseUrlPolicy & { sessionStore?: SessionStore } = {},
+  ) {
+    this.baseUrl = normalizeBaseUrl(baseUrl, options);
+    this.cookieUrl = `${this.baseUrl}/`;
+    this.session = {};
+    this.cookies = new CookieJar(this.cookieUrl);
+    this.sessionStore = options.sessionStore ?? new FileSessionStore();
     // maxRedirects:0 + validateStatus 全收，便于自行判断登录/重定向结果
-    this.http = axios.create({
-      baseURL: baseUrl,
-      timeout: 30000,
-      maxRedirects: 0,
-      validateStatus: () => true,
-      headers: { 'User-Agent': UA },
+    this.http = createHttpClient(this.baseUrl);
+    this.http.defaults.headers.common['User-Agent'] = UA;
+    this.http.interceptors.response.use((response) => {
+      const changed = this.storeCookies(response.headers);
+      if (changed && this.session.username) {
+        // Cookie 轮换不应使一次已成功的查询失败；持久化采用尽力策略。
+        try { this.saveSession(); } catch { /* 下次显式登录时会报告存储错误 */ }
+      }
+      return response;
     });
   }
 
   // 直接注入已认证的 Cookie（例如 USTS_COOKIES 或持久化文件）
   setCookies(raw: string): void {
-    for (const part of raw.split(';')) {
-      const idx = part.indexOf('=');
-      if (idx > 0) this.session.cookies.set(part.slice(0, idx).trim(), part.slice(idx + 1).trim());
-    }
+    this.cookies.importCookieHeader(raw, this.cookieUrl);
   }
 
-  private storeCookies(headers: any): void {
+  private storeCookies(headers: any): boolean {
     const setCookie = headers && (headers['set-cookie'] as string[] | undefined);
-    if (!setCookie) return;
-    for (const c of setCookie) {
-      const pair = c.split(';')[0];
-      const idx = pair.indexOf('=');
-      if (idx > 0) this.session.cookies.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
+    if (!setCookie) return false;
+    let changed = false;
+    for (const c of Array.isArray(setCookie) ? setCookie : [String(setCookie)]) {
+      changed = this.cookies.setCookie(c, this.cookieUrl) || changed;
     }
+    return changed;
   }
 
-  private cookieHeader(): string {
-    return Array.from(this.session.cookies.entries())
-      .map(([k, v]) => `${k}=${v}`)
-      .join('; ');
+  private cookieHeader(url = this.cookieUrl): string {
+    return this.cookies.header(url);
   }
 
   /**
@@ -69,14 +82,14 @@ export class JwglClient {
       );
       this.storeCookies(pageResp.headers);
       if (pageResp.status >= 300 && pageResp.status < 400) {
-        return { success: false, message: '登录页被重定向，可能被 WAF 拦截，请稍后重试或改用 USTS_COOKIES' };
+        return { success: false, errorCode: 'RATE_LIMITED', message: '登录页被重定向，可能被 WAF 拦截，请稍后重试或改用 USTS_COOKIES' };
       }
       const html = typeof pageResp.data === 'string' ? pageResp.data : '';
       const csrfMatch = html.match(/id="csrftoken"[^>]*value="([^"]*)"/);
       const csrf = csrfMatch ? csrfMatch[1] : '';
-      if (!csrf) return { success: false, message: '登录页缺少 csrftoken，接口可能已变更' };
+      if (!csrf) return { success: false, errorCode: 'PROTOCOL_CHANGED', message: '登录页缺少 csrftoken，接口可能已变更' };
       if (/id="yzm"|name="yzm"/.test(html)) {
-        return { success: false, message: '账号当前需要图形验证码，无法自动登录。请把浏览器 Cookie 粘贴到 USTS_COOKIES 后运行 usts login，或用 npm run capture 人工登录' };
+        return { success: false, errorCode: 'CAPTCHA_REQUIRED', message: '账号当前需要图形验证码，无法自动登录。请把浏览器 Cookie 粘贴到 USTS_COOKIES 后运行 usts login，或用 npm run capture 人工登录' };
       }
 
       // 2. 取 RSA 公钥（必须与登录 POST 保持同一会话）
@@ -88,9 +101,9 @@ export class JwglClient {
       this.storeCookies(keyResp.headers);
       const keyJson: any = keyResp.data;
       if (!keyJson || !keyJson.modulus || !keyJson.exponent) {
-        return { success: false, message: '获取 RSA 公钥失败，请稍后重试' };
+        return { success: false, errorCode: 'PROTOCOL_CHANGED', message: '获取 RSA 公钥失败，请稍后重试' };
       }
-      const mm = this.encryptPassword(password, keyJson.modulus, keyJson.exponent);
+      const mm = encryptPassword(password, keyJson.modulus, keyJson.exponent);
 
       // 3. 提交登录（首 POST 会被 WAF 重置会话 → 同一 cookie jar 重试一次）
       const postLogin = () => {
@@ -128,70 +141,42 @@ export class JwglClient {
         return { success: true, message: '登录成功', data: { username } };
       }
       const body = typeof resp.data === 'string' ? resp.data : '';
-      if (/用户名或密码/.test(body)) return { success: false, message: '用户名或密码不正确' };
-      return { success: false, message: '登录失败：未跳转到主菜单，请检查账号密码后重试' };
-    } catch (e: any) {
-      return { success: false, message: `登录异常：${e?.message || '未知错误'}` };
+      if (/用户名或密码/.test(body)) return { success: false, errorCode: 'INVALID_CREDENTIALS', message: '用户名或密码不正确' };
+      return { success: false, errorCode: 'REMOTE_SERVER_ERROR', message: '登录失败：未跳转到主菜单，请检查账号密码后重试' };
+    } catch (cause: unknown) {
+      return {
+        success: false,
+        errorCode: isAppError(cause) ? cause.code : 'UNKNOWN_ERROR',
+        message: `登录异常：${errorMessage(cause)}`,
+      };
     }
   }
 
-  // RSA(PKCS#1 v1.5) 加密密码（公钥 modulus/exponent 为 base64），返回 base64 密文
-  private encryptPassword(password: string, modulus: string, exponent: string): string {
-    const toInt = (b: Buffer): Buffer => {
-      let s = b;
-      while (s.length > 1 && s[0] === 0) s = s.subarray(1);
-      if ((s[0] & 0x80) !== 0) s = Buffer.concat([Buffer.from([0]), s]);
-      return s;
-    };
-    const tlv = (tag: number, content: Buffer): Buffer => {
-      const len = content.length;
-      if (len < 0x80) return Buffer.concat([Buffer.from([tag, len]), content]);
-      const lb: number[] = [];
-      let n = len;
-      while (n > 0) {
-        lb.unshift(n & 0xff);
-        n >>>= 8;
-      }
-      return Buffer.concat([Buffer.from([tag, 0x80 | lb.length, ...lb]), content]);
-    };
-    const seq = tlv(0x30, Buffer.concat([
-      tlv(0x02, toInt(Buffer.from(modulus, 'base64'))),
-      tlv(0x02, toInt(Buffer.from(exponent, 'base64'))),
-    ]));
-    const b64 = seq.toString('base64').match(/.{1,64}/g)!.join('\n');
-    const pem = '-----BEGIN RSA PUBLIC KEY-----\n' + b64 + '\n-----END RSA PUBLIC KEY-----';
-    return crypto.publicEncrypt(
-      { key: pem, padding: crypto.constants.RSA_PKCS1_PADDING },
-      Buffer.from(password),
-    ).toString('base64');
-  }
-
-  // 会话持久化：保存 Cookie 到 .session.json
+  // 会话持久化：保存到安全的用户状态目录
   saveSession(): void {
-    const data = {
-      cookies: Array.from(this.session.cookies.entries()),
+    this.sessionStore.save({
+      schemaVersion: 1,
+      origin: new URL(this.baseUrl).origin,
+      cookies: this.cookies.serialize(),
       username: this.session.username,
-      loginTime: this.session.loginTime,
-    };
-    try {
-      fs.writeFileSync(SESSION_FILE, JSON.stringify(data));
-    } catch {
-      /* 忽略写入失败 */
-    }
+      loginTime: this.session.loginTime?.toISOString(),
+    });
   }
 
-  // 从 .session.json 恢复会话（不发起网络请求）
+  // 从用户状态目录恢复会话（兼容迁移旧版 .session.json，不发起网络请求）
   restoreSession(): boolean {
-    if (!fs.existsSync(SESSION_FILE)) return false;
-    try {
-      const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
-      this.session.cookies = new Map(data.cookies || []);
-      this.session.username = data.username;
-      this.session.loginTime = data.loginTime ? new Date(data.loginTime) : undefined;
-      return this.session.cookies.size > 0;
-    } catch {
-      return false;
-    }
+    if (this.cookies.size > 0) return true;
+    const data = this.sessionStore.load();
+    if (!data) return false;
+    const origin = new URL(this.baseUrl).origin;
+    if (data.origin && data.origin !== origin) return false;
+    this.cookies = new CookieJar(this.cookieUrl);
+    this.cookies.restore(data.cookies);
+    this.session.username = data.username;
+    this.session.loginTime = data.loginTime ? new Date(data.loginTime) : undefined;
+    // 旧版 cwd/.session.json 没有 origin；成功读取后按新契约迁移到安全状态目录。
+    if (!data.origin && this.cookies.size > 0) this.saveSession();
+    return this.cookies.size > 0;
   }
 
   // 通过访问受保护页面验证会话是否有效（最可靠的判断方式）
@@ -216,23 +201,11 @@ export class JwglClient {
 
   // WAF 会对短时间内的重复请求做连接层重置（ERR_CONNECTION_CLOSED），
   // 对连接类错误做有限次退避重试（登录 POST 已在 loginViaScript 内双 POST 重试）。
-  private async requestWithRetry(fn: () => Promise<AxiosResponse>): Promise<AxiosResponse> {
-    const maxAttempts = 3;
-    let lastErr: any;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        return await fn();
-      } catch (e: any) {
-        lastErr = e;
-        const msg = e?.message || '';
-        if (attempt < maxAttempts && /ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ERR_CONNECTION|socket hang up/i.test(msg)) {
-          await new Promise((r) => setTimeout(r, 6000 * attempt));
-          continue;
-        }
-        throw e;
-      }
-    }
-    throw lastErr;
+  private async requestWithRetry(
+    fn: () => Promise<AxiosResponse>,
+    effect: OperationEffect = 'read',
+  ): Promise<AxiosResponse> {
+    return executeWithRetry(fn, { effect });
   }
 
   // ===== 查询类功能 =====
@@ -248,12 +221,8 @@ export class JwglClient {
    *   - 1 月：上一学年 → 第一学期 (xqm=3)
    */
   static currentTerm(): { xnm: string; xqm: string } {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth() + 1;
-    if (m >= 8) return { xnm: String(y), xqm: '3' };           // 8~12 月：本学年第一学期
-    if (m >= 2) return { xnm: String(y - 1), xqm: '12' };      // 2~7 月：本学年第二学期
-    return { xnm: String(y - 1), xqm: '3' };                   // 1 月：上一学年第一学期
+    const term = currentTerm();
+    return { xnm: term.academicYear, xqm: term.semester };
   }
 
   /**
@@ -299,21 +268,19 @@ export class JwglClient {
           },
         }),
       );
-      if (resp.status >= 300 && resp.status < 400) throw new Error('会话已失效，请重新运行 usts login');
-      const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
-      if (/login_slogin|请先登录|登录超时/.test(raw)) throw new Error('会话已失效，请重新运行 usts login');
+      assertReadableResponse(resp);
       let data: any = resp.data;
       if (typeof data === 'string') {
         try {
           data = JSON.parse(data);
         } catch {
           // 服务端返回非 JSON（错误提示页等）不是正常空数据；首页即失败直接报错
-          if (all.length === 0) throw new Error('查询失败：服务端未返回数据（可能会话失效或接口被拒）');
+          if (all.length === 0) throw new AppError('PROTOCOL_CHANGED', '查询失败：服务端未返回数据（可能会话失效或接口被拒）');
           break;
         }
       }
       const before = all.length;
-      const items = data && Array.isArray(data.items) ? data.items : [];
+      const items = recordArray(data?.items);
       all.push(...items);
       const total = Number(data && data.totalCount) || 0;
       // 没有更多页、已取完、或本页未返回新数据（防止服务端忽略分页导致死循环）
@@ -323,44 +290,14 @@ export class JwglClient {
     return all;
   }
 
-  private static toNum(v: any): number | undefined {
-    if (v === null || v === undefined || v === '') return undefined;
-    const n = Number(v);
-    return Number.isNaN(n) ? undefined : n;
-  }
-
-  /** 从 jc/jcor（形如 "7-9" 或 "7-9节"）提取起始/结束节次 */
-  private static parseSections(jc: any): { start?: number; end?: number } {
-    const m = String(jc ?? '').match(/(\d+)\s*[-~]\s*(\d+)/);
-    return m ? { start: Number(m[1]), end: Number(m[2]) } : {};
-  }
-
   /** 学生成绩查询；主接口为空时自动回退到备用接口 cjcx_cxDgXscj.html（2026-08 实测可用） */
   async queryScores(xnm = '', xqm = '', extra: Record<string, string> = {}): Promise<ScoreItem[]> {
-    const mapItem = (it: any): ScoreItem => ({
-      courseName: it.kcmc || '',
-      courseCode: it.kch || '',
-      courseNature: it.kcxzmc || '',
-      credit: JwglClient.toNum(it.xf),
-      score: it.cj ?? '',
-      score100: it.bfzcj ?? '',
-      gpa: JwglClient.toNum(it.jd),
-      college: it.jgmc || '',
-      teacher: it.jsxm || '',
-      assessMethod: it.khfsmc || '',
-      examType: it.ksxz || '',
-      academicYear: it.xnmmc || '',
-      semester: it.xqmmc || '',
-      className: it.bj || '',
-      major: it.zymc || '',
-      teachingClass: it.jxbmc || '',
-    });
     let items = await this.postGrid('/cjcx/cjcx_cxXsgrcj.html', 'N305005', { xnm, xqm, ...extra });
     if (items.length === 0) {
       // 备用接口（学生个人成绩另一 action），防止主接口异常/改版导致取不到
       items = await this.postGrid('/cjcx/cjcx_cxDgXscj.html', 'N305005', { xnm, xqm, ...extra });
     }
-    return items.map(mapItem);
+    return items.map(mapScoreItem);
   }
 
   /** 考试信息查询（真实 action 带 Index 后缀，2026-08 实测） */
@@ -382,8 +319,8 @@ export class JwglClient {
         headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}/xtgl/index_initMenu.html` },
       }),
     );
+    assertReadableResponse(resp);
     const html: string = typeof resp.data === 'string' ? resp.data : '';
-    if (/login_slogin|请先登录|登录超时/.test(html)) throw new Error('会话已失效，请重新运行 usts login');
     // 详情页结构：<label>姓名：</label> ... <p class="form-control-static">张三</p>
     const pairs: Record<string, string> = {};
     const labelRe = /<label[^>]*>([^<]+?)[：:]\s*<\/label>/g;
@@ -442,30 +379,10 @@ export class JwglClient {
         },
       }),
     );
-    if (resp.status >= 300 && resp.status < 400) throw new Error('会话已失效，请重新运行 usts login');
-    const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
-    if (/请先登录|登录超时|login_slogin/.test(raw)) throw new Error('会话已失效，请重新运行 usts login');
+    assertReadableResponse(resp);
 
-    const data: any = typeof resp.data === 'string' ? JSON.parse(resp.data || '{}') : resp.data;
-    const list: any[] = Array.isArray(data?.sjkList) ? data.sjkList : [];
-    return list.map((it: any) => {
-      const sec = JwglClient.parseSections(it.jc);
-      return {
-        courseName: it.kcmc || '',
-        teacher: it.jsxm || undefined,
-        className: it.jxbzh || undefined,          // 教学班
-        campus: it.xqmc || undefined,              // 校区，如“石湖”
-        credit: JwglClient.toNum(it.xf),
-        weeks: it.qsjsz || undefined,              // 上课周次，如“1-17周”
-        courseType: it.kclb || undefined,          // 课程类别，如“专业教育课程”
-        assessMethod: it.khfsmc || undefined,      // 考核方式
-        academicYear: it.xnmc || '',               // 如“2026-2027”
-        // 有具体排课时间的条目才带星期/节次（jc 形如 "5-6"）
-        weekday: JwglClient.toNum(it.xqj),
-        startSection: sec.start,
-        endSection: sec.end,
-      };
-    });
+    const data: any = parseJsonValue(resp.data, '个人课表响应');
+    return recordArray(data?.sjkList).map(mapScheduleItem);
   }
 
   // ===== 班级课表（bjkbdy，2026-08 抓包实测）=====
@@ -481,8 +398,8 @@ export class JwglClient {
         headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}${path}` },
       }),
     );
+    assertReadableResponse(resp);
     const html = typeof resp.data === 'string' ? resp.data : String(resp.data);
-    if (/请先登录|登录超时|login_slogin/.test(html)) throw new Error('会话已失效，请重新运行 usts login');
 
     const grab = (name: string): { value: string; label: string; selected: boolean }[] => {
       const i = html.indexOf(`name="${name}"`);
@@ -518,7 +435,7 @@ export class JwglClient {
         headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}/kbdy/bjkbdy_cxBjkbdyIndex.html`, 'X-Requested-With': 'XMLHttpRequest' },
       }),
     );
-    if (typeof resp.data === 'string' && /login_slogin|请先登录|登录超时/.test(resp.data)) throw new Error('会话已失效，请重新运行 usts login');
+    assertReadableResponse(resp);
     const arr = Array.isArray(resp.data) ? resp.data : (resp.data && resp.data.items) || [];
     return arr.map((m: any) => ({ value: m.zyh_id, label: m.zymc, meta: m }));
   }
@@ -531,7 +448,7 @@ export class JwglClient {
         headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}/kbdy/bjkbdy_cxBjkbdyIndex.html`, 'X-Requested-With': 'XMLHttpRequest' },
       }),
     );
-    if (typeof resp.data === 'string' && /login_slogin|请先登录|登录超时/.test(resp.data)) throw new Error('会话已失效，请重新运行 usts login');
+    assertReadableResponse(resp);
     const arr = Array.isArray(resp.data) ? resp.data : (resp.data && resp.data.items) || [];
     return arr.map((c: any) => ({ value: c.bh_id, label: c.bj, meta: c }));
   }
@@ -565,36 +482,12 @@ export class JwglClient {
         },
       }),
     );
-    if (resp.status >= 300 && resp.status < 400) throw new Error('会话已失效，请重新运行 usts login');
-    const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
-    if (/请先登录|登录超时|login_slogin/.test(raw)) throw new Error('会话已失效，请重新运行 usts login');
-    const data: any = typeof resp.data === 'string' ? JSON.parse(raw || '{}') : resp.data;
-
-    const mapItem = (it: any): ClassScheduleItem => {
-      const sec = JwglClient.parseSections(it.jcor || it.jcs);
-      return {
-        courseName: it.kcmc || '',
-        teacher: it.xm || undefined,
-        teacherTitle: it.zcmc || undefined,
-        jxbmc: it.jxbmc || undefined,
-        jxbzc: it.jxbzc || undefined,
-        campus: it.xqmc || undefined,
-        room: it.cdmc || undefined,
-        roomType: it.cdlbmc || undefined,
-        credit: JwglClient.toNum(it.xf),
-        totalHours: JwglClient.toNum(it.kczxs),
-        weeks: it.zcd || undefined,
-        assessMethod: it.khfsmc || undefined,
-        courseNature: it.kcxzjc || undefined,
-        weekday: JwglClient.toNum(it.xqj),
-        startSection: sec.start,
-        endSection: sec.end,
-      };
-    };
-    const list: any[] = Array.isArray(data.kbList) ? data.kbList : [];
+    assertReadableResponse(resp);
+    const data: any = parseJsonValue(resp.data, '班级课表响应');
+    const list = recordArray(data.kbList);
     // 过滤“未排地点”占位条目
-    const items = list.filter((it) => it.cdmc && it.cdmc !== '未排地点').map(mapItem);
-    const practice: string[] = (Array.isArray(data.sjkList) ? data.sjkList : [])
+    const items = list.filter((it) => it.cdmc && it.cdmc !== '未排地点').map(mapClassScheduleItem);
+    const practice: string[] = recordArray(data.sjkList)
       .map((it: any) => it.qtkcgs || it.sjkcgs || '')
       .filter(Boolean);
     return { items, practice };
@@ -616,9 +509,9 @@ export class JwglClient {
         'X-Requested-With': 'XMLHttpRequest',
       },
     }));
-    this.assertReadableResponse(resp);
-    const data: any = this.parseResponseData(resp);
-    const list: any[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+    assertReadableResponse(resp);
+    const data: any = parseJsonValue(resp.data, '通知响应');
+    const list = recordArray(Array.isArray(data) ? data : data?.items);
     return list.map((it: any) => {
       const content = String(it.xxnr ?? it.content ?? '');
       const title = String(it.xxbt ?? it.title ?? it.bt ?? '');
@@ -641,12 +534,12 @@ export class JwglClient {
     const resp = await this.requestWithRetry(() => this.http.get(`${path}?gnmkdm=N105515&layout=default`, {
       headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}/xtgl/index_initMenu.html` },
     }));
-    this.assertReadableResponse(resp);
+    assertReadableResponse(resp);
     const html = String(resp.data || '');
-    const visible = this.cleanHtml(html);
-    const texts = this.extractVisibleText(html);
+    const visible = cleanHtml(html);
+    const texts = extractVisibleText(html);
     const fontValues = [...html.matchAll(/<font[^>]*size=["']?2px["']?[^>]*>([\s\S]*?)<\/font>/gi)]
-      .map((m) => this.toNumber(this.cleanHtml(m[1])))
+      .map((m) => toNumber(cleanHtml(m[1])))
       .filter((v): v is number => v !== undefined);
     const numbers = (patterns: RegExp[]): number | undefined => {
       for (const pattern of patterns) {
@@ -672,10 +565,10 @@ export class JwglClient {
     const resp = await this.requestWithRetry(() => this.http.get(`${path}?gnmkdm=N105515&layout=default`, {
       headers: { Cookie: this.cookieHeader(), Referer: `${this.baseUrl}/xtgl/index_initMenu.html` },
     }));
-    this.assertReadableResponse(resp);
+    assertReadableResponse(resp);
     const html = String(resp.data || '');
-    const text = this.extractVisibleText(html);
-    const sid = this.matchText(html, /id=["']xh_id["'][^>]*value=["']([^"']+)["']/i) || this.session.username;
+    const text = extractVisibleText(html);
+    const sid = matchText(html, /id=["']xh_id["'][^>]*value=["']([^"']+)["']/i) || this.session.username;
 
     // 分类树（页面为前端 JS 模板拼装，节点形如：
     //   "名称&nbsp;" + $.i18n.get('yqxf')/* 要求学分 */ + ":N&nbsp;" + ... + "<span id='showKc<ID>'>")
@@ -689,19 +582,19 @@ export class JwglClient {
       categories.push({
         name,
         id: m[5] || undefined,
-        requiredCredits: JwglClient.toNum(m[2]),
-        earnedCredits: JwglClient.toNum(m[3]),
-        missingCredits: JwglClient.toNum(m[4]),
+        requiredCredits: toNumber(m[2]),
+        earnedCredits: toNumber(m[3]),
+        missingCredits: toNumber(m[4]),
         detailAvailable: !!m[5],
         raw: [m[1], m[2], m[3], m[4], m[5]],
       });
     }
 
     const summaryText = text.join(' ');
-    const stat = (pattern: RegExp): number | undefined => this.toNumber(this.matchText(summaryText, pattern));
+    const stat = (pattern: RegExp): number | undefined => toNumber(matchText(summaryText, pattern));
     return {
       studentId: sid,
-      gpa: this.toNumber(this.matchText(summaryText, /(?:平均学分绩点（GPA）|平均绩点|GPA)[^0-9]*([0-9]+(?:\.[0-9]+)?)/i)),
+      gpa: toNumber(matchText(summaryText, /(?:平均学分绩点（GPA）|平均绩点|GPA)[^0-9]*([0-9]+(?:\.[0-9]+)?)/i)),
       plannedCourses: stat(/计划总课程\s*(\d+)\s*门/),
       passedCourses: stat(/计划总课程\s*\d+\s*门\s*通过\s*(\d+)\s*门/),
       failedCourses: stat(/未通过\s*(\d+)\s*门/),
@@ -727,26 +620,9 @@ export class JwglClient {
         },
       }),
     );
-    this.assertReadableResponse(resp);
-    let data: any = resp.data;
-    if (typeof data === 'string') { try { data = JSON.parse(data); } catch { return []; } }
-    if (!Array.isArray(data)) return [];
-    return data.map((it: any) => ({
-      courseId: it.KCH || '',
-      title: it.KCMC || '',
-      englishTitle: it.KCYWMC || '',
-      status: it.XDZT != null ? String(it.XDZT) : undefined,
-      credit: JwglClient.toNum(it.XF),
-      category: it.KCLBMC || '',
-      nature: it.KCXZMC || '',
-      grade: it.CJ ?? '',
-      maxGrade: it.MAXCJ ?? '',
-      gpa: JwglClient.toNum(it.JD),
-      displayTerm: [it.JYXDXNMC, it.JYXDXQMC].filter(Boolean).join('·'),
-      planned: it.SFJHKC === '是',
-      hours: it.XSXXXX || '',
-      raw: it,
-    }));
+    assertReadableResponse(resp);
+    const data = parseJsonValue(resp.data, '学业分类响应');
+    return recordArray(data).map(mapAcademiaCourseItem);
   }
 
   /** 查询已选课程；当前项目只保留查询接口，不实现选课/退课。 */
@@ -761,26 +637,9 @@ export class JwglClient {
         'X-Requested-With': 'XMLHttpRequest',
       },
     }));
-    this.assertReadableResponse(resp);
-    const data: any = this.parseResponseData(resp);
-    const list: any[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
-    return list.map((it: any) => ({
-      courseId: it.kch_id ?? it.kch,
-      classId: it.jxb_id ?? it.jxbid,
-      executionId: it.do_jxb_id ?? it.dojxbid,
-      title: it.kcmc ?? it.kchmc,
-      teacherId: this.matchText(String(it.jsxx ?? ''), /([0-9]+)\s*\//),
-      teacher: this.matchText(String(it.jsxx ?? ''), /\/([^/]+)\//) ?? it.jsmc ?? it.jsxm,
-      credit: this.toNumber(it.xf),
-      category: it.kklxmc ?? it.kclbmc,
-      capacity: this.toNumber(it.jxbrs),
-      selectedNumber: this.toNumber(it.yxzrs),
-      place: this.cleanHtml(String(it.jxdd ?? '')),
-      time: this.cleanHtml(String(it.sksj ?? '')).replace(/\s*<br\s*\/?>\s*/gi, '、'),
-      optional: it.zixf === 1 || it.zixf === '1' || it.zixf === true,
-      waiting: it.sxbj,
-      raw: it,
-    }));
+    assertReadableResponse(resp);
+    const data: any = parseJsonValue(resp.data, '已选课程响应');
+    return recordArray(Array.isArray(data) ? data : data?.items).map(mapSelectedCourseItem);
   }
 
   /** 下载个人课表 PDF（只读；学期使用当前 USTS xqm 编码）。 */
@@ -814,13 +673,13 @@ export class JwglClient {
     const policy = await this.requestWithRetry(() => this.http.post(`${policyPath}?gnmkdm=N2151`, body.toString(), {
       headers: this.formHeaders(`${this.baseUrl}${policyPath}`),
     }));
-    this.assertReadableResponse(policy);
+    assertReadableResponse(policy, '课表 PDF 预检');
     const file = await this.requestWithRetry(() => this.http.post(`${filePath}?doType=table`, body.toString(), {
       headers: this.formHeaders(`${this.baseUrl}${filePath}`),
       responseType: 'arraybuffer',
     }));
     const bytes = Buffer.from(file.data);
-    this.assertPdfResponse(file.status, bytes);
+    assertPdfResponse(file.status, bytes);
     return bytes;
   }
 
@@ -837,7 +696,7 @@ export class JwglClient {
         params,
         headers: this.formHeaders(`${this.baseUrl}${ref}`),
       }));
-      this.assertReadableResponse(resp);
+      assertReadableResponse(resp, '成绩总表生成');
       return resp;
     };
     await post('/bysxxcx/xscjzbdy_dyXscjzbView.html', params);
@@ -849,82 +708,28 @@ export class JwglClient {
     await post('/common/common_cxJwxtxx.html', params);
     const fileResp = await post('/bysxxcx/xscjzbdy_dyList.html', noType);
     const fileText = String(fileResp.data || '');
-    if (/错误|error_title/i.test(fileText)) throw new Error('成绩总表 PDF 生成失败');
+    if (/错误|error_title/i.test(fileText)) throw new AppError('REMOTE_SERVER_ERROR', '成绩总表 PDF 生成失败');
     const pdfPath = fileText.replace('#成功', '').replace(/"/g, '').trim().replace(/\\/g, '/');
-    if (!pdfPath) throw new Error('成绩总表 PDF 未返回下载路径');
+    if (!pdfPath) throw new AppError('PROTOCOL_CHANGED', '成绩总表 PDF 未返回下载路径');
     await post('/xtgl/progress_cxProgressStatus.html', { key: 'score_print_processed', ...params });
-    const downloadUrl = /^https?:\/\//i.test(pdfPath) ? pdfPath : this.resolveDownloadUrl(pdfPath);
+    const downloadUrl = assertSameOriginUrl(pdfPath, this.baseUrl);
     const download = await this.requestWithRetry(() => this.http.get(downloadUrl, {
       headers: this.formHeaders(downloadUrl),
       responseType: 'arraybuffer',
       timeout: 32000,
     }));
     const bytes = Buffer.from(download.data);
-    this.assertPdfResponse(download.status, bytes);
+    assertPdfResponse(download.status, bytes);
     return bytes;
-  }
-
-  private resolveDownloadUrl(value: string): string {
-    const clean = value.trim();
-    if (clean.startsWith('/')) return new URL(clean, `${this.baseUrl}/`).toString();
-    return new URL(clean, `${this.baseUrl}/`).toString();
   }
 
   private formHeaders(referer: string): Record<string, string> {
     return {
-      Cookie: this.cookieHeader(),
+      Cookie: this.cookieHeader(referer),
       Referer: referer,
       'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
       'X-Requested-With': 'XMLHttpRequest',
     };
   }
 
-  private assertPdfResponse(status: number, bytes: Buffer): void {
-    if (status >= 300 && status < 400) throw new Error('会话已失效，请重新运行 usts login');
-    const prefix = bytes.subarray(0, 4096).toString('utf8');
-    if (/用户登录|请先登录|登录超时|login_slogin/.test(prefix)) throw new Error('会话已失效，请重新运行 usts login');
-    if (status >= 400) throw new Error(`PDF 下载失败：HTTP ${status}`);
-    if (!bytes.subarray(0, 5).toString('ascii').startsWith('%PDF-')) throw new Error('服务端未返回有效 PDF 文件');
-  }
-
-  private assertReadableResponse(resp: AxiosResponse): void {
-    if (resp.status >= 300 && resp.status < 400) throw new Error('会话已失效，请重新运行 usts login');
-    const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
-    if (/用户登录|请先登录|登录超时|login_slogin/.test(raw)) throw new Error('会话已失效，请重新运行 usts login');
-    if (resp.status >= 400) throw new Error(`查询失败：HTTP ${resp.status}`);
-  }
-
-  private parseResponseData(resp: AxiosResponse): any {
-    if (typeof resp.data !== 'string') return resp.data;
-    try { return JSON.parse(resp.data || '{}'); } catch { throw new Error('查询失败：服务端未返回有效 JSON'); }
-  }
-
-  private cleanHtml(value: string): string {
-    return value
-      .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<br\s*\/?>(\s*)/gi, ' ')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  private extractVisibleText(html: string): string[] {
-    return this.cleanHtml(html).split(/\s{2,}|\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 200);
-  }
-
-  private matchText(value: string, pattern: RegExp): string | undefined {
-    const m = value.match(pattern);
-    return m?.[1]?.trim() || undefined;
-  }
-
-  private toNumber(value: any): number | undefined {
-    if (value === undefined || value === null || value === '') return undefined;
-    const m = String(value).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
-    if (!m) return undefined;
-    const n = Number(m[0]);
-    return Number.isFinite(n) ? n : undefined;
-  }
 }

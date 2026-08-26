@@ -1,15 +1,15 @@
-import { JwglClient } from '../lib/client';
-import { header, info, error, success } from '../lib/logger';
-import { printJson, printTable } from '../lib/format';
-import { ensureSession, resolveTerm, termLabel } from './_shared';
+import { SelectedCoursesGateway } from '../application/ports/jwgl-gateway';
+import { header, info, success } from '../lib/logger';
+import { printJsonEnvelope, printTable } from '../lib/format';
+import { ensureSession, resolveTerm, termLabel, reportCommandError } from './_shared';
 
-export async function selectedCoursesCommand(client: JwglClient, opts: { xnm?: string; xqm?: string; json?: boolean }): Promise<void> {
+export async function selectedCoursesCommand(client: SelectedCoursesGateway, opts: { xnm?: string; xqm?: string; json?: boolean }): Promise<void> {
   if (!(await ensureSession(client))) return;
   const { xnm, xqm } = resolveTerm(opts);
   try {
     const items = await client.querySelectedCourses(xnm, xqm);
     if (opts.json) {
-      printJson({ xnm, xqm, items });
+      printJsonEnvelope('selected-courses', items, { xnm, xqm });
       return;
     }
     console.log(header(`已选课程   ${termLabel(xnm, xqm)}`));
@@ -33,6 +33,6 @@ export async function selectedCoursesCommand(client: JwglClient, opts: { xnm?: s
     );
     console.log(success(`共 ${items.length} 门已选课程`));
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败', { json: opts.json, command: 'selected-courses' });
   }
 }

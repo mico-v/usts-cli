@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `usts` is a Node.js (CommonJS) CLI for the 苏州科技大学 (Suzhou University of Science & Technology) **正方教务系统** (Zhifang educational administration system) at `jwgl.usts.edu.cn/jwglxt`. It logs in as a student and performs **read-only** queries (grades, exams, course lists, schedule, profile). Source is TypeScript in `src/`, compiled to `dist/`, exposed as the `usts` binary.
 
+Runtime baseline: Node.js `>=22.12` (Commander 15 requirement).
+
 ## Commands
 
 - `npm install` — install dependencies. `puppeteer*` sits in `devDependencies` (only used by the dev `npm run capture` tool), so its Chrome download can be skipped with `npm install --omit=dev` — **login does not need a browser**.
@@ -11,21 +13,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `node dist/index.js <command>` — run the built CLI (requires a prior build). Also aliased as `npm run start`; `npm link` exposes it globally as `usts`.
 - `npm run dev -- <command>` — run via `ts-node` without compiling. Prefer the compiled `node dist/index.js <command>` for reliability — ts-node invocations can be killed by tooling monitor windows.
 - `node dist/index.js` (no args) — interactive menu shell (login / queries / profile). The menu also exposes 班级课表 (`clsched`).
-- First use: `usts login`, which persists a session to `.session.json`; subsequent queries reuse it.
+- First use: `usts login`, which persists a private session in the OS user state directory; legacy cwd `.session.json` is migrated.
 
-**There is no test runner or linter configured** — `package.json` has no `test`/`lint` scripts. Don't assume `npm test` works.
+Quality commands: `npm run typecheck`, `npm run lint`, `npm test`, and the aggregate `npm run check`. Tests use Node's built-in test runner against compiled `dist/` output.
 
 **Dependency split**: `dependencies` = `axios`, `commander`, `inquirer` (all imported at runtime by `src/`); `devDependencies` = `typescript`, `ts-node`, `@types/*`, and `puppeteer*` (runtime no longer needs Puppeteer — only the dev `tools/capture-browser.mjs` does). A `--omit=dev`/`--production` install of just `dist/` runs fine. Keep runtime imports in `dependencies`.
 
 ## Architecture
 
-Three layers under `src/`:
+The project is a modular monolith with ports/adapters boundaries (see `docs/architecture.md`):
 
-- **`lib/client.ts` — `JwglClient`, the single HTTP boundary.** Wraps an axios instance (`baseURL` = 教务系统 host, 30s timeout, `maxRedirects: 0`, `validateStatus: () => true` so it can judge login/redirects itself). Owns the session cookie jar (`Map<string,string>` + `username`/`loginTime`, types in `types/api.ts`).
-- **`commands/` — one exported async function per CLI command**, each taking a `JwglClient` and an opts object. `commands/_shared.ts` holds `ensureSession()` (restore + validate session; prints a hint and returns `false` if unusable), `resolveTerm()`, and term-label helpers. `interactive.ts` is the menu shell that reuses the same command functions.
-- **`index.ts` — the commander router** at the entry point. Registers `login`, `scores`, `exams`, `courses`, `schedule`, `clsched`, `profile`, `gpa`, `notifications`, `academia`, `selected-courses`, `schedule-pdf`, `academia-pdf`; the term-based queries share `-y/--xnm` and `-t/--xqm` options via `addTermOptions()`. With no args it launches `interactiveShell()`.
+- **`domain/`** — stable errors and pure term rules; no Axios, filesystem, Commander, or Inquirer imports.
+- **`config/`** — trusted Base URL policy and cross-platform state paths.
+- **`infrastructure/http/`** — explicit keep-alive agents, retry semantics, and an attribute-aware Cookie Jar.
+- **`infrastructure/session/`** — versioned, origin-bound, atomic `0700/0600` session storage.
+- **`infrastructure/jwgl/`** — remote DTO validation, parsers, and domain mappers.
+- **`lib/client.ts`** — compatibility façade while endpoint capabilities are gradually extracted.
+- **`commands/`** — CLI orchestration/presentation. `ensureSession()` restores locally only; business responses detect expiry, avoiding a preflight request for every command.
+- **`index.ts`** — Commander router and top-level error/exit-code boundary.
 
-Support modules: `lib/logger.ts` (ANSI-colored output: `success`/`error`/`warning`/`info`/`header`), `lib/format.ts` (`printTable`), `lib/env.ts` (minimal dotenv-style `.env` loader, non-overriding). All output/UI text is Chinese; comments and API field names are Chinese/pinyin.
+All output/UI text is Chinese; comments and remote API field names are Chinese/pinyin. Keep the dependency direction documented in `docs/architecture.md`.
 
 ## The 正方 V9 data interface (the key to adding a query)
 
@@ -52,14 +59,15 @@ Schedule caveat: `sjkList` items carry `xqj`/`jc` (weekday/section) only for cou
 
 ### Extension pattern for a new query
 
-1. Add the result type to `types/api.ts`.
-2. Add a method on `JwglClient` in `lib/client.ts` (use `postGrid` for list endpoints).
-3. Add a command function in `commands/` (call `ensureSession`, `resolveTerm`).
-4. Register it in `index.ts` via commander.
+1. Add/adjust the stable domain result type in `types/api.ts` (remote fields do not belong there).
+2. Add DTO validation and mapping under `infrastructure/jwgl/`.
+3. Add the endpoint adapter (temporarily delegated through `JwglClient`; use `postGrid` for list endpoints).
+4. Add a command function in `commands/` (call `ensureSession`, `resolveTerm`, and `reportCommandError`).
+5. Register it in `index.ts` and add fixture/CLI tests.
 
 ## Session & login
 
-- `loginCommand` (in `commands/login.ts`) tries in order: existing valid `.session.json` → `USTS_COOKIES` env injection → pure-script login (`loginViaScript`, using `.env` creds or an `inquirer` prompt).
+- `loginCommand` (in `commands/login.ts`) tries in order: existing valid secure session → `USTS_COOKIES` env injection → pure-script login (`loginViaScript`, using `.env` creds or an `inquirer` prompt).
 - **Login is pure script (2026-08 verified)**: classic 正方 `login_slogin.html` RSA login, no Puppeteer/Chrome. The 瑞数 JSLUID WAF **resets the session's *first* login POST** (302 back to login + rotated JSESSIONID), so `loginViaScript` just retries the identical POST once on the same cookie jar — the second one lands on `index_initMenu.html`. It fetches the login page (parse `#csrftoken`), GETs `login_getPublicKey.html`, RSA-encrypts the password (PKCS#1 v1.5, Node `crypto`), POSTs `{csrftoken, yhm, mm, language=zh_CN, ydType=}` (mm twice like the browser). The same csrtoken/mm is reused across the retry. If a captcha is required (`input#yzm`, after repeated failures) it can't be solved automatically — the CLI then tells the user to inject `USTS_COOKIES` or use `npm run capture`.
 - Sessions expire server-side after hours–days. Re-run `usts login`.
 - Credentials/config: `USTS_BASE_URL`, `USTS_USERNAME`, `USTS_PASSWORD`, `USTS_COOKIES` via `.env` (gitignored) or real env vars. `.env` injects into `process.env` without overriding existing values.
@@ -71,4 +79,4 @@ Schedule caveat: `sjkList` items carry `xqj`/`jc` (weekday/section) only for cou
 - **Term defaults** (aligned with the web, 2026-08 verified): `JwglClient.currentTerm()` — Aug–Dec → `{xnm: current year, xqm:'3'}` (the upcoming fall semester); Feb–Jul → `{xnm: previous year, xqm:'12'}`; Jan → `{xnm: previous year, xqm:'3'}`. Codes: `3`=fall, `12`=spring, `16`=short term. Passing `-y` without `-t` leaves the term empty = all semesters of that year.
 - Response field names are pinyin abbreviations of the Chinese labels (e.g. `kcmc`=课程名称/course name, `jsxm`=教师/teacher, `xf`=学分/credit). See the comments in `types/api.ts`.
 - **`_`-prefixed files in the repo root** (`_cxDgXscj.js`, `_sched_probe.mjs`, `_sched_data.json`, `_probe_out.txt`, `_check_waf.txt`, `_tsc.log`, …) are exploratory reverse-engineering scratch artifacts (WAF probing / schedule-JS inspection). They are not source and not part of the build — safe to ignore or delete.
-- `.session.json` is resolved against `process.cwd()` and is gitignored — never commit it.
+- Session state defaults to the OS user state directory (`~/.local/state/usts-cli/session.json` on Linux), uses `0700/0600`, and is origin-bound. Never commit legacy `.session.json` or capture data.

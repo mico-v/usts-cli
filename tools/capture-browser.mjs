@@ -5,7 +5,7 @@
  * 启动一个可见的 Chrome 窗口，你「正常浏览」教务系统即可；脚本在后台自动记录：
  *   1. 每个页面的最终渲染 DOM（含 JS 渲染结果）        -> captures/<序号>_<路径>.html
  *   2. 所有 XHR / fetch 数据接口请求与响应              -> captures/network.jsonl
- *   3. 会话 Cookie（供 CLI 直接复用）                  -> .session.json + captures/session-cookies.txt
+ *   3. 会话 Cookie（供 CLI 直接复用）                  -> 用户状态目录/session.json + captures/session-cookies.txt
  *
  * 数据接口清单汇总写到 captures/summary.md —— 用它来写 CLI 的 query 方法，不用瞎猜。
  *
@@ -17,20 +17,36 @@
  */
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const TARGET_HOSTS = new Set(['jwgl.usts.edu.cn', 'localhost', '127.0.0.1']);
 const OUT_DIR = path.resolve(process.cwd(), 'captures');
-const SESSION_FILE = path.resolve(process.cwd(), '.session.json');
+const STATE_DIR = process.env.USTS_STATE_DIR
+  ? path.resolve(process.env.USTS_STATE_DIR)
+  : process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'usts-cli')
+    : process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Application Support', 'usts-cli')
+      : path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'), 'usts-cli');
+const SESSION_FILE = path.join(STATE_DIR, 'session.json');
 const NET_LOG = path.join(OUT_DIR, 'network.jsonl');
 const SUMMARY_FILE = path.join(OUT_DIR, 'summary.md');
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
-fs.mkdirSync(OUT_DIR, { recursive: true });
+fs.mkdirSync(OUT_DIR, { recursive: true, mode: 0o700 });
+fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+try { fs.chmodSync(OUT_DIR, 0o700); fs.chmodSync(STATE_DIR, 0o700); } catch {}
+
+function writePrivate(file, value) {
+  fs.writeFileSync(file, value, { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch {}
+}
 
 let seq = 0;
 const cookieJar = new Map(); // name -> value（跨页面合并）
 let detectedUsername = '';
+let sessionOrigin = 'https://jwgl.usts.edu.cn';
 const seenRequests = new Map(); // "method url postData" -> count（去重）
 const endpoints = new Map(); // 清洗后的 action url -> 元信息
 const domTimers = new Map(); // page -> timer（XHR 重渲染防抖）
@@ -51,7 +67,7 @@ function slugFor(u) {
 }
 function keyFor(u) { return u.replace(/[?&](nd|time)=\d+/g, ''); }
 
-// ---------- 学号检测（用于给 .session.json 补 username） ----------
+// ---------- 学号检测（用于给安全会话文件补 username） ----------
 function detectUsername(html) {
   if (detectedUsername) return;
   const re1 = html.match(/<label[^>]*>\s*学号\s*[:：]\s*<\/label>[\s\S]{0,200}?form-control-static[^>]*>\s*(\d{6,12})/);
@@ -63,6 +79,7 @@ function detectUsername(html) {
 // ---------- 会话持久化 ----------
 async function collectCookies(page) {
   try {
+    sessionOrigin = new URL(page.url()).origin;
     const cookies = await page.cookies();
     for (const c of cookies) cookieJar.set(c.name, c.value);
   } catch { /* 页面已关闭 */ }
@@ -70,15 +87,17 @@ async function collectCookies(page) {
 function persistCookies() {
   if (!cookieJar.size) return;
   const data = {
+    schemaVersion: 1,
+    origin: sessionOrigin,
     cookies: [...cookieJar.entries()],
     username: detectedUsername || undefined,
     loginTime: new Date().toISOString(),
   };
   try {
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(data, null, 2));
-    fs.writeFileSync(path.join(OUT_DIR, 'session-cookies.txt'),
+    writePrivate(SESSION_FILE, JSON.stringify(data, null, 2));
+    writePrivate(path.join(OUT_DIR, 'session-cookies.txt'),
       [...cookieJar.entries()].map(([k, v]) => `${k}=${v}`).join('; '));
-    log(`已保存会话 Cookie ${cookieJar.size} 个 -> .session.json` + (detectedUsername ? `（学号 ${detectedUsername}）` : ''));
+    log(`已保存会话 Cookie ${cookieJar.size} 个 -> ${SESSION_FILE}` + (detectedUsername ? `（学号 ${detectedUsername}）` : ''));
   } catch (e) { log('保存会话失败:', e.message); }
 }
 
@@ -95,8 +114,8 @@ async function dumpDom(page, reason) {
 
   const id = String(++seq).padStart(3, '0');
   const name = `${id}_${slugFor(href)}`;
-  fs.writeFileSync(path.join(OUT_DIR, `${name}.html`), html);
-  fs.writeFileSync(
+  writePrivate(path.join(OUT_DIR, `${name}.html`), html);
+  writePrivate(
     path.join(OUT_DIR, `${name}.meta.json`),
     JSON.stringify({ seq, reason, time: ts(), title, url: href, username: detectedUsername || undefined }, null, 2),
   );
@@ -158,7 +177,7 @@ function attachNet(page) {
         responseContentType: ctype.split(';')[0] || null,
         responseBody: body, bodyBytes: body ? body.length : null,
       });
-      fs.appendFileSync(NET_LOG, line + '\n');
+      fs.appendFileSync(NET_LOG, line + '\n', { encoding: 'utf8', mode: 0o600 });
       log(`NET ${rec.method} ${res.status()} ${rec.url.split('?')[0]}${body ? `  (${body.length}B)` : ''}`);
     }
 
@@ -191,7 +210,7 @@ function finalize() {
       md += `- \`${f}\`\n`;
     });
   } catch {}
-  try { fs.writeFileSync(SUMMARY_FILE, md); } catch {}
+  try { writePrivate(SUMMARY_FILE, md); } catch {}
   log('浏览器已关闭。汇总见 captures/summary.md，网络记录见 captures/network.jsonl');
 }
 

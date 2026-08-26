@@ -1,9 +1,9 @@
-import { JwglClient } from '../lib/client';
-import { header, info, error, success } from '../lib/logger';
+import { ScoresGateway } from '../application/ports/jwgl-gateway';
+import { header, info, success } from '../lib/logger';
 import { printTable } from '../lib/format';
-import { ensureSession, semesterLabel, academicYearLabel, termLabel, resolveTerm } from './_shared';
+import { ensureSession, semesterLabel, academicYearLabel, termLabel, resolveTerm, reportCommandError } from './_shared';
 
-export async function scoresCommand(client: JwglClient, opts: { xnm?: string; xqm?: string; kcxzdm?: string }): Promise<void> {
+export async function scoresCommand(client: ScoresGateway, opts: { xnm?: string; xqm?: string; kcxzdm?: string }): Promise<void> {
   if (!(await ensureSession(client))) return;
   const { xnm, xqm } = resolveTerm(opts);
   // 先用请求参数给出标题，查询后用接口返回的真实学年/学期名覆盖
@@ -28,6 +28,6 @@ export async function scoresCommand(client: JwglClient, opts: { xnm?: string; xq
     const totalCredit = items.reduce((a, s) => a + (s.credit || 0), 0);
     console.log(success(`共 ${items.length} 门课程 · 学分合计 ${totalCredit}`));
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败');
   }
 }

@@ -1,7 +1,7 @@
-import { JwglClient } from '../lib/client';
-import { header, info, error, success } from '../lib/logger';
+import { ExamsGateway } from '../application/ports/jwgl-gateway';
+import { header, info, success } from '../lib/logger';
 import { printTable } from '../lib/format';
-import { ensureSession, termLabel, resolveTerm } from './_shared';
+import { ensureSession, termLabel, resolveTerm, reportCommandError } from './_shared';
 
 // 考试信息字段因校而异，做防御性映射：命中任一候选键即采用
 function pick(obj: any, keys: string[]): string {
@@ -9,7 +9,7 @@ function pick(obj: any, keys: string[]): string {
   return '';
 }
 
-export async function examsCommand(client: JwglClient, opts: { xnm?: string; xqm?: string }): Promise<void> {
+export async function examsCommand(client: ExamsGateway, opts: { xnm?: string; xqm?: string }): Promise<void> {
   if (!(await ensureSession(client))) return;
   const { xnm, xqm } = resolveTerm(opts);
   console.log(header(`考试信息查询   ${termLabel(xnm, xqm)}`));
@@ -31,6 +31,6 @@ export async function examsCommand(client: JwglClient, opts: { xnm?: string; xqm
     );
     console.log(success(`共 ${items.length} 条考试记录`));
   } catch (e: any) {
-    console.error(error(e?.message || '查询失败'));
+    reportCommandError(e, '查询失败');
   }
 }

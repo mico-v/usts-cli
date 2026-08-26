@@ -2,7 +2,7 @@
  * 交互式终端界面
  *
  * 启动后进入多级菜单：主菜单 -> 查询子菜单 -> 查询类型 -> 复刻网页查询表单 -> 输出结果。
- * 复用各命令函数与 JwglClient，会话按需在每次操作时重建（均从 .session.json 恢复）。
+ * 复用各命令函数与同一个 JwglClient；Cookie Jar、连接池和限流状态贯穿整个交互会话。
  */
 import inquirer from 'inquirer';
 import { JwglClient } from '../lib/client';
@@ -18,6 +18,7 @@ import { gpaCommand } from './gpa';
 import { notificationsCommand } from './notifications';
 import { academiaCommand } from './academia';
 import { selectedCoursesCommand } from './selected-courses';
+import { currentTerm } from '../domain/term';
 
 type QueryType = 'scores' | 'exams' | 'courses' | 'schedule' | 'clsched' | 'gpa' | 'notifications' | 'academia' | 'selected-courses';
 
@@ -101,9 +102,9 @@ async function queryMenu(): Promise<QueryType | null> {
 }
 
 /** 进入具体查询：展示表单 -> 执行查询命令 */
-async function runQuery(type: QueryType, baseUrl: string): Promise<void> {
-  const def = JwglClient.currentTerm();
-  const client = new JwglClient(baseUrl);
+async function runQuery(type: QueryType, client: JwglClient): Promise<void> {
+  const term = currentTerm();
+  const def = { xnm: term.academicYear, xqm: term.semester };
   switch (type) {
     case 'scores': {
       const form = await askScoreForm(def.xnm, def.xqm);
@@ -147,6 +148,7 @@ async function runQuery(type: QueryType, baseUrl: string): Promise<void> {
 }
 
 export async function interactiveShell(baseUrl: string): Promise<void> {
+  const client = new JwglClient(baseUrl);
   console.log(header('苏州科技大学教务系统 CLI'));
   console.log(info('用方向键选择，回车确认。首次使用请先「登录教务系统」。'));
   while (true) {
@@ -165,12 +167,12 @@ export async function interactiveShell(baseUrl: string): Promise<void> {
     }
 
     if (action === 'login') {
-      await loginCommand(new JwglClient(baseUrl));
+      await loginCommand(client);
       continue;
     }
 
     if (action === 'profile') {
-      await profileCommand(new JwglClient(baseUrl));
+      await profileCommand(client);
       continue;
     }
 
@@ -178,7 +180,7 @@ export async function interactiveShell(baseUrl: string): Promise<void> {
       const type = await queryMenu();
       if (!type) continue;
       try {
-        await runQuery(type, baseUrl);
+        await runQuery(type, client);
       } catch (e: any) {
         if (e?.message?.includes('interrupted')) break;
         console.error(error(e?.message || '查询中断'));
@@ -186,4 +188,6 @@ export async function interactiveShell(baseUrl: string): Promise<void> {
       continue;
     }
   }
+  // 交互会话允许在一次失败后继续操作，正常退出不继承中途命令的退出码。
+  process.exitCode = 0;
 }

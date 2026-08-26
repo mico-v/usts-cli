@@ -2,6 +2,8 @@
  * 命令行输出样式配置
  */
 
+import { sanitizeTerminalText } from '../shared/sanitize';
+
 export const STYLES = {
   // 颜色
   colors: {
@@ -33,7 +35,9 @@ export const STYLES = {
 export type Color = keyof typeof STYLES.colors;
 
 export function color(text: string, c: Color): string {
-  return `${STYLES.colors[c]}${text}${STYLES.colors.reset}`;
+  const safe = sanitizeTerminalText(text);
+  if (process.env.NO_COLOR !== undefined || !process.stderr.isTTY && !process.stdout.isTTY) return safe;
+  return `${STYLES.colors[c]}${safe}${STYLES.colors.reset}`;
 }
 
 export function success(text: string): string {
