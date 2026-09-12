@@ -1,10 +1,10 @@
 {
-  "name": "usts-cli",
+  "name": "@mico-v/usts-cli",
   "version": "1.0.0",
   "description": "正方教务系统 CLI 工具",
   "main": "dist/index.js",
   "bin": {
-    "usts": "./dist/index.js"
+    "usts": "dist/index.js"
   },
   "scripts": {
     "build": "tsc && node tools/chmod-bin.mjs",
