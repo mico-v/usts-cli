@@ -1,6 +1,17 @@
 # usts - 苏州科技大学教务系统命令行工具
 
+[![npm version](https://img.shields.io/npm/v/usts-jwgl.svg)](https://www.npmjs.com/package/usts-jwgl)
+[![npm downloads](https://img.shields.io/npm/dm/usts-jwgl.svg)](https://www.npmjs.com/package/usts-jwgl)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen.svg)](package.json)
+
 `usts` 是一个面向苏州科技大学**正方教务系统**（V9，`jwgl.usts.edu.cn/jwglxt`）的命令行工具。登录后无需打开浏览器，即可在终端快速查询成绩、考试、课表、选课名单与个人信息。
+
+```bash
+npm i -g usts-jwgl@latest   # 安装；命令名为 usts
+usts login                  # 首次登录并持久化会话
+usts                        # 不带参数进入交互式菜单
+```
 
 > 适用对象：在校生（学生账号）。所有查询均为**只读**，不修改任何教务数据。
 
