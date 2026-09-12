@@ -38,10 +38,10 @@ npm run check      # 类型检查、架构规则与自动化测试
 
 > **登录不依赖浏览器**：账号密码登录是纯脚本（RSA + 双 POST 重试），无需安装 Puppeteer/Chrome。`puppeteer*` 仅在 `devDependencies`，只服务于开发用的 `npm run capture` 抓包工具；生产/无浏览器环境可按需 `npm install --omit=dev` 跳过它。
 
-也可以直接从 npm 全局安装（包名 `@mico-v/usts-cli`，命令名是 `usts`）：
+也可以直接从 npm 全局安装（包名 `usts-jwgl`，命令名是 `usts`）：
 
 ```bash
-npm i -g @mico-v/usts-cli@latest   # 之后可用 usts <命令>
+npm i -g usts-jwgl@latest   # 之后可用 usts <命令>
 usts --help
 ```
 
@@ -55,7 +55,7 @@ npm link                           # 之后可用 usts <命令>
 
 `npm link` 会通过 `prepare` 钩子自动编译（`tools/prepare.mjs`）。若你 `npm install --omit=dev` 装过（没有 typescript），该钩子会跳过构建而不是让安装失败——此时需要自己跑一次 `npm run build`。
 
-> **权限陷阱**：`npm link` / `npm install -g .` 对本地目录是**符号链接**安装，`usts` 直接指向本仓库的 `dist/index.js`。`tsc` 产出的文件没有执行位（0644），而 npm 不会去改链接目标的权限，于是会出现 `zsh: permission denied: usts`。因此 `npm run build` 的最后一步会补上执行位（`tools/chmod-bin.mjs`）——**别单独跑 `tsc`**。想装一份真正的拷贝（不受仓库路径与权限影响），用 `npm pack` + `npm install -g ./mico-v-usts-cli-1.0.0.tgz`。
+> **权限陷阱**：`npm link` / `npm install -g .` 对本地目录是**符号链接**安装，`usts` 直接指向本仓库的 `dist/index.js`。`tsc` 产出的文件没有执行位（0644），而 npm 不会去改链接目标的权限，于是会出现 `zsh: permission denied: usts`。因此 `npm run build` 的最后一步会补上执行位（`tools/chmod-bin.mjs`）——**别单独跑 `tsc`**。想装一份真正的拷贝（不受仓库路径与权限影响），用 `npm pack` + `npm install -g ./usts-jwgl-1.0.0.tgz`。
 
 > 开发模式（无需编译，需 ts-node）：`npm run dev -- <命令>`
 
