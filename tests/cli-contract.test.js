@@ -10,14 +10,15 @@ test('JSON success output uses a versioned envelope', () => {
   let output = '';
   console.log = (value) => { output += String(value); };
   try {
-    printJsonEnvelope('gpa', { gpa: 4, raw: { secret: true } }, { source: 'test' });
+    // undefined 归一成 null：字段始终存在，消费方不必区分「缺失」与「空」
+    printJsonEnvelope('gpa', { gpa: 4, averageScore: undefined }, { source: 'test' });
   } finally {
     console.log = original;
   }
   assert.deepEqual(JSON.parse(output), {
     schemaVersion: 1,
     command: 'gpa',
-    data: { gpa: 4 },
+    data: { gpa: 4, averageScore: null },
     meta: { source: 'test' },
     warnings: [],
   });

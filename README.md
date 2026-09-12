@@ -46,19 +46,31 @@ node dist/index.js <命令>          # 直接运行
 npm link                           # 之后可用 usts <命令>
 ```
 
+`npm link` 会通过 `prepare` 钩子自动编译（`tools/prepare.mjs`）。若你 `npm install --omit=dev` 装过（没有 typescript），该钩子会跳过构建而不是让安装失败——此时需要自己跑一次 `npm run build`。
+
+> **权限陷阱**：`npm link` / `npm install -g .` 对本地目录是**符号链接**安装，`usts` 直接指向本仓库的 `dist/index.js`。`tsc` 产出的文件没有执行位（0644），而 npm 不会去改链接目标的权限，于是会出现 `zsh: permission denied: usts`。因此 `npm run build` 的最后一步会补上执行位（`tools/chmod-bin.mjs`）——**别单独跑 `tsc`**。想装一份真正的拷贝（不受仓库路径与权限影响），用 `npm pack` + `npm install -g ./usts-cli-1.0.0.tgz`。
+
 > 开发模式（无需编译，需 ts-node）：`npm run dev -- <命令>`
 
 ---
 
 ## 配置
 
-在项目根目录创建 `.env` 文件（可参考下方字段）：
+配置文件放在**用户配置目录**下的 `.env`（不是当前目录）：
+
+| 平台 | 路径 |
+|---|---|
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/usts-cli/.env` |
+| macOS | `~/Library/Application Support/usts-cli/.env` |
+| Windows | `%APPDATA%\usts-cli\.env` |
+
+可用 `USTS_CONFIG_DIR` 覆盖目录，或用 `USTS_ENV_FILE=/path/to/.env` 直接指定文件。
 
 ```ini
 # 教务系统基础地址（一般无需修改）
 USTS_BASE_URL=https://jwgl.usts.edu.cn/jwglxt
 
-# 登录账号（配置后 usts login 可免交互）
+# 登录账号（配置后 usts login 可免交互，且查询命令可自动重新登录）
 USTS_USERNAME=你的学号
 USTS_PASSWORD=你的密码
 
@@ -69,15 +81,23 @@ USTS_PASSWORD=你的密码
 # USTS_STATE_DIR=/path/to/private/state
 ```
 
-`.env` 中的账号密码仅在运行 `usts login` 时使用，不会外发到除教务系统以外的任何地址。
+建议 `chmod 600` 该文件（权限过宽时启动会告警）。真实环境变量优先于文件内容。
+
+> **为什么不读当前目录的 `.env`**：全局安装后命令会在任意目录运行。若按 cwd 读配置，`cd` 进一个带 `.env` 的目录（clone 的仓库、别人给的压缩包）就等于让那个目录决定凭据发往哪台主机——一份 `USTS_BASE_URL` + `USTS_ALLOW_CUSTOM_HOST=1` 就能把登录请求引向别的站点，拿到你的密码。当前目录里若存在这样的文件，启动时会提示你它**没有**被读取。
+
+`.env` 中的账号密码仅用于向教务系统登录，不会外发到除教务系统以外的任何地址。
 
 出于凭证安全，默认只允许 HTTPS 的 `jwgl.usts.edu.cn`。本地协议测试如需自定义主机，必须显式设置 `USTS_ALLOW_CUSTOM_HOST=1`；使用明文 HTTP 还需额外设置 `USTS_ALLOW_INSECURE_HTTP=1`。
+
+> 这两个开关**只能来自真实环境变量**，写在配置文件里会被忽略并告警：它们的用途正是放宽信任边界，而配置文件比 shell 环境更容易被复制、同步、随项目分发，不能让它自己解除自己的限制。
 
 ---
 
 ## 登录
 
-首次使用需先登录一次，会话会持久化到操作系统用户状态目录，之后查询命令可直接复用，无需重复登录。Linux 默认路径为 `~/.local/state/usts-cli/session.json`；旧版项目目录 `.session.json` 会自动迁移。
+首次使用需先登录一次，会话会持久化到操作系统用户状态目录，之后查询命令可直接复用，无需重复登录。Linux 默认路径为 `~/.local/state/usts-cli/session.json`。
+
+> 旧版放在项目目录的 `.session.json` **不再被读取**（该格式没有 `origin` 字段，无法判断会话归属，从任意目录读取等于让该目录注入登录态，见 [ADR-0004](docs/adr/0004-retire-legacy-cwd-session.md)）。若检测到该文件，启动时会提示；删除它并重新 `usts login` 即可。
 
 ```bash
 usts login
@@ -86,8 +106,10 @@ usts login
 登录流程（按优先级自动选择）：
 
 1. 若用户状态目录中已有**有效**会话 → 直接复用。
-2. 若设置了环境变量 `USTS_COOKIES` → 注入并校验该 Cookie。
+2. 若设置了环境变量 `USTS_COOKIES` → 注入并用个人信息页校验。失效时，如果 `.env` 里有账号密码，会自动改走账号密码登录（而不是直接判死）。
 3. 否则通过**账号密码纯脚本登录**：经典正方 RSA 加密 + 「双 POST 重试」（`loginViaScript`）。
+
+> 查询命令也会**主动校验会话**：不在信任窗口内时先发一次探针请求，确认失效则**自动重新登录并重放本次查询**，因此正常使用中很少需要手动 `usts login`。自动重登只使用 `.env`/环境变量中的凭据，**不会**弹出交互式提示。详见[会话与凭证](#会话与凭证)。
 
 > 登录走经典正方页 `login_slogin.html`（瑞数 WAF 会重置「会话内首次登录 POST」，所以脚本会同一会话重试一次即成功）。**无需安装 Puppeteer/Chrome，无需浏览器**。若该次登录需要**图形验证码**（连续失败触发，无法自动处理），会提示改用 `npm run capture` 人工登录后复用会话，或注入 `USTS_COOKIES`。
 
@@ -100,6 +122,7 @@ usts login
 | 命令 | 说明 | 是否需要学期参数 |
 |------|------|------------------|
 | `usts login` | 登录教务系统 | 否 |
+| `usts logout` | 退出登录（删除本地保存的会话，幂等） | 否 |
 | `usts scores` | 查询学生成绩 | 可选 |
 | `usts exams` | 查询考试安排 | 可选 |
 | `usts courses` | 查询选课名单 | 可选 |
@@ -110,6 +133,8 @@ usts login
 | `usts notifications` | 查询通知和待办事项 | 否 |
 | `usts academia` | 查询学业情况（GPA/统计/课程分类，可 `--category` 拉明细） | 否 |
 | `usts selected-courses` | 查询已选课程详情（只读） | 可选 |
+| `usts schedule-pdf` | 下载个人课表 PDF（只读） | 可选（缺省文件带学年学期） |
+| `usts academia-pdf` | 下载成绩总表 PDF（只读） | 否 |
 
 查看任意命令的详细帮助：
 
@@ -117,6 +142,17 @@ usts login
 usts --help            # 总览
 usts scores --help     # 单命令帮助
 ```
+
+不带任何子命令运行 `usts` 会进入交互式菜单（登录 / 查询 / 个人信息 / 退出登录 / 退出）。菜单标题会显示当前会话状态：
+
+```
+ℹ 会话：本地已保存会话 · 25200****** · 登录于 3 小时前。查询前会自动校验，失效时尝试自动重新登录。
+? 请选择操作（本地已保存会话 · 25200****** · 登录于 3 小时前）
+```
+
+选中「查询」或「查看个人信息」时会**立刻在后台发起一次会话校验**，与后面的菜单选择、学年/学期表单并行进行；等你填完表单，校验（必要时还有自动重登）通常已经完成。因此不会出现「一路填到最后一个命令才报未登录」的情况——若确实未登录，会在你选完查询类型后立即提示。并发调用会合并成同一次请求，不会因此多发探针。
+
+交互式菜单需要真实终端。若 stdin 不是终端（管道、`</dev/null`、CI），会直接以退出码 2 退出并提示改用子命令，而不是抛 `readline` 堆栈。`usts login`（需要输入学号密码时）和 `usts clsched`（不带 `--bh`，需要级联选择）同理——只要凭据或参数齐备，它们在非终端环境下照常工作，可在脚本里使用。
 
 ---
 
@@ -235,7 +271,7 @@ usts academia --category 思想政治类   # 拉取某分类下的课程明细
 usts selected-courses -y 2025 -t 3
 ```
 
-`academia --category` 按分类名（子串匹配）拉取该分类的课程明细（课程号/成绩/绩点/建议学期等）；汇总节点（如「语言类」）无直接明细，需查其叶子分类（如「大学英语」）。`scores` 主接口无数据时自动回退备用接口。`selected-courses` 与 `courses` 不是同一个功能：前者查询已选课程详情（教学班、容量、已选人数、地点等），后者查询课程名单。上述命令均为只读，不执行选课或退课操作。`zfn_api` 使用的旧学期参数 `1/2` 不适用于本项目，当前 USTS 仍使用 `xqm=3/12/16`。
+`academia --category` 按分类名（子串匹配）拉取该分类的课程明细（课程号/成绩/绩点/建议学期等）；汇总节点（如「语言类」）无直接明细，需查其叶子分类（如「大学英语」）。`scores` 主接口**被拒或改版时**自动回退备用接口（空结果不会触发回退——新学期没成绩是正常的）。`selected-courses` 与 `courses` 不是同一个功能：前者查询已选课程详情（教学班、容量、已选人数、地点等），后者查询课程名单。上述命令均为只读，不执行选课或退课操作。`zfn_api` 使用的旧学期参数 `1/2` 不适用于本项目，当前 USTS 仍使用 `xqm=3/12/16`。
 
 支持 `--json` 的命令使用版本化输出信封：`{schemaVersion, command, data, meta?, warnings}`；JSON 错误写入 `stderr`。完整契约和退出码见 [`docs/contracts/cli.md`](docs/contracts/cli.md)。
 
@@ -244,17 +280,25 @@ usts selected-courses -y 2025 -t 3
 ### 9. PDF 下载（只读）
 
 ```bash
-usts schedule-pdf -y 2026 -t 3 -o ./schedule.pdf
-usts academia-pdf -o ./transcript.pdf
+usts schedule-pdf -y 2026 -t 3            # → schedule-2026-3.pdf
+usts schedule-pdf -o ./schedule.pdf       # 指定文件名
+usts academia-pdf                         # → transcript.pdf
 ```
 
-默认拒绝覆盖已有文件，使用 `--force` 才会覆盖。PDF 可能包含个人课表、成绩和学籍信息，请自行选择安全的输出路径。实现已接入正方打印模块的多步只读请求链，并校验 `%PDF-` 文件头；不同时间段/模块权限可能导致服务器拒绝生成文件。
+缺省文件名由命令本身决定：`schedule-pdf` 带学年与学期（`schedule-<学年>-<学期>.pdf`），避免不同学期的课表互相覆盖；`academia-pdf` 为 `transcript.pdf`。
+
+默认拒绝覆盖已有文件，使用 `--force` 才会覆盖。PDF 可能包含个人课表、成绩和学籍信息，请自行选择安全的输出路径。实现已接入正方打印模块的多步只读请求链（含同源跳转跟随），并校验 `%PDF-` 文件头；不同时间段/模块权限可能导致服务器拒绝生成文件。交互式菜单里也有这两项，会先问文件名、已存在时再确认是否覆盖。
 
 ## 会话与凭证
 
-- **存储位置**：Linux 默认 `~/.local/state/usts-cli/session.json`；可用 `USTS_STATE_DIR` 覆盖。目录权限为 `0700`，文件权限为 `0600`。
-- **兼容迁移**：旧版当前目录 `.session.json` 仍可读取，成功读取后迁移到新位置并尽力收紧旧文件权限。
-- **有效期**：会话由教务系统控制，一般数小时至数天；过期后查询会提示「会话已失效，请重新运行 usts login」。
+- **存储位置**：Linux 默认 `~/.local/state/usts-cli/session.json`；可用 `USTS_STATE_DIR` 覆盖。目录权限为 `0700`，文件权限为 `0600`，使用临时文件 + 原子重命名保存。
+- **origin 绑定**：会话文件必须带 `origin` 且与当前 `USTS_BASE_URL` 一致才会被加载。旧版当前目录 `.session.json`（无 `origin`）自 [ADR-0004](docs/adr/0004-retire-legacy-cwd-session.md) 起不再读取，删除后重新 `usts login` 即可。
+- **敏感度**：会话文件里是**明文 bearer token**，效力等同于密码——拿到它就能取全部数据，不需要密码或二次验证。`0600` 只挡其他用户，不挡以你的身份运行的进程，也不挡家目录被备份/同步。当前未接系统凭证管理器，文件加密不在计划内，请按与密码同等的敏感度对待。
+- **有效期**：会话由教务系统控制，一般数小时至数天。过期后查询命令会**自动重新登录并重放本次查询**（凭据来自 `.env`/环境变量），通常无感。没有可用凭据时才会提示「会话已失效」，此时运行 `usts login`。
+- **主动校验与信任窗口**：查询命令在执行前会校验会话。刚登录或刚校验过的一段时间内（默认 5 分钟）直接复用、不发探针；窗口过期后才发一次探针请求（用 `USTS_SESSION_TRUST_MS` 调整，设为 `0` 则每次命令都校验）。网络异常时**不会**误判为会话失效，而是照常执行、由业务响应兜底。
+- **自动重登的边界**：只使用环境变量中的凭据，绝不弹出交互式提示；失败后会进入冷却期，避免连续登录把账号打进验证码锁定。需要交互式输入时请显式运行 `usts login`。
+- **代价**：自动重登需要 `.env` 里有 `USTS_USERNAME`/`USTS_PASSWORD`，所以它会把密码长期留在磁盘上。只想用 `USTS_COOKIES` 的话，会话过期后需要手动重新注入，不会自动重登。
+- **退出登录**：`usts logout` 删除本地会话文件并清空内存 Cookie（幂等，未登录时也返回成功）。它**只做本地清理**——正方没有可安全调用的登出接口，因此服务端会话会继续有效直到自然到期；要立即失效只能在浏览器里退出登录。
 - **手动注入 Cookie**：如果你已在浏览器登录，可把请求头里的 `Cookie` 整串复制到环境变量 `USTS_COOKIES`，运行 `usts login` 即可校验并复用，无需账号密码：
 
   ```bash
@@ -267,10 +311,13 @@ usts academia-pdf -o ./transcript.pdf
 ## 常见问题
 
 **Q：运行查询命令提示「未找到会话 / 会话已失效」？**
-A：先运行 `usts login`。若已登录仍失效，说明会话过期，重新 `usts login` 即可。
+A：提示「未找到会话」说明本地还没有会话，运行 `usts login`。提示「会话已失效」说明自动重登没能成功——按提示检查 `.env` 里的 `USTS_USERNAME`/`USTS_PASSWORD` 是否正确，或手动运行 `usts login`（可能触发了图形验证码）。
 
-**Q：请求失败、报错 `ERR_CONNECTION_CLOSED` 或卡住？**
-A：校园网前置 WAF 对短时间内的重复请求有限流，会直接重置连接。请**暂停 30~60 秒后重试**。登录命令已内置重试与退避，查询命令遇到限流时稍等再试即可。
+**Q：查询卡住不动，或者报「请求超时」？**
+A：单个请求的等待上限是 15 秒（PDF 下载 45 秒），超时会自动换一条连接重试，并在 stderr 打出 `请求超时，正在重试（2/3）…` 这样的提示——看到提示说明程序在正常工作，不是死机。若连续重试后仍失败，多半是校园网前置 WAF 在限流：**暂停 30~60 秒后重试**。若提示是 `连接被重置，N 秒后重试…`，那是 WAF 直接重置了连接，程序会在退避后自动重试。
+
+**Q：请求失败、报错 `ERR_CONNECTION_CLOSED`？**
+A：同上，属 WAF 限流。登录命令与查询命令都已内置重试与退避，稍等再试即可。
 
 **Q：`usts login` 提示需要验证码 / 一直失败？**
 A：登录是纯脚本（无需浏览器）。若提示「需要图形验证码」，说明账号刚被连续失败锁出，请改用 `USTS_COOKIES` 注入已登录的浏览器 Cookie，或 `npm run capture` 人工登录。若为 `ERR_CONNECTION_CLOSED`，属 WAF 限流，等待 30~60 秒重试即可。

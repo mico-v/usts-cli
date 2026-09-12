@@ -84,11 +84,23 @@ export class CookieJar {
       }
     }
     const key = this.key(cookie);
-    if (cookie.expiresAt !== undefined && cookie.expiresAt <= Date.now()) return this.cookies.delete(key);
+    if (cookie.expiresAt !== undefined && cookie.expiresAt <= Date.now()) {
+      // 服务端明确要删除该 Cookie。按 name+domain 清理所有 path 变体：
+      // 只删同 path 的那一条会在服务端轮换 Path 后留下同名残留，
+      // 结果是把两个 JSESSIONID 一起发给服务端。
+      this.deleteByName(cookie.domain, cookie.name);
+      return this.cookies.delete(key);
+    }
     if (!cookie.name) return false;
     const previous = this.cookies.get(key);
     this.cookies.set(key, cookie);
     return !previous || JSON.stringify(previous) !== JSON.stringify(cookie);
+  }
+
+  private deleteByName(domain: string, name: string): void {
+    for (const [key, existing] of this.cookies) {
+      if (existing.name === name && existing.domain === domain) this.cookies.delete(key);
+    }
   }
 
   header(requestUrl = this.defaultUrl): string {

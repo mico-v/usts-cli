@@ -1,11 +1,21 @@
 import {
   AcademiaCourseItem,
   ClassScheduleItem,
+  CourseListItem,
+  ExamItem,
   ScheduleItem,
   ScoreItem,
   SelectedCourseItem,
 } from '../../types/api';
 import { assertHasAnyField, cleanHtml, matchText, parseSections, RawRecord, toNumber } from './value';
+
+function pickRaw(item: RawRecord, keys: string[]): string {
+  for (const key of keys) {
+    const value = item[key];
+    if (value !== undefined && value !== null && value !== '') return String(value);
+  }
+  return '';
+}
 
 export function mapScoreItem(item: RawRecord): ScoreItem {
   assertHasAnyField(item, ['kcmc', 'kch'], '成绩条目');
@@ -15,7 +25,6 @@ export function mapScoreItem(item: RawRecord): ScoreItem {
     courseNature: item.kcxzmc || '',
     credit: toNumber(item.xf),
     score: item.cj ?? '',
-    score100: item.bfzcj ?? '',
     gpa: toNumber(item.jd),
     college: item.jgmc || '',
     teacher: item.jsxm || '',
@@ -59,9 +68,7 @@ export function mapClassScheduleItem(item: RawRecord): ClassScheduleItem {
     jxbzc: item.jxbzc || undefined,
     campus: item.xqmc || undefined,
     room: item.cdmc || undefined,
-    roomType: item.cdlbmc || undefined,
     credit: toNumber(item.xf),
-    totalHours: toNumber(item.kczxs),
     weeks: item.zcd || undefined,
     assessMethod: item.khfsmc || undefined,
     courseNature: item.kcxzjc || undefined,
@@ -71,14 +78,39 @@ export function mapClassScheduleItem(item: RawRecord): ClassScheduleItem {
   };
 }
 
+/**
+ * 考试信息。字段因校而异，按候选键取第一个非空值。
+ * （原先这段 `pick` 逻辑复制在命令层，映射模式与成绩/课表不一致，已收敛到这里。）
+ */
+export function mapExamItem(item: RawRecord): ExamItem {
+  assertHasAnyField(item, ['kcmc', 'kchmc'], '考试条目');
+  return {
+    courseName: pickRaw(item, ['kcmc', 'kchmc']),
+    examTime: pickRaw(item, ['kssj', 'kssjmc', 'ksrq', 'kssj_str']),
+    location: pickRaw(item, ['cdmc', 'jsmc', 'jsbh', 'kcdd', 'cdmcxx']),
+    seat: pickRaw(item, ['zwh', 'kxh', 'zwhh', 'zw']),
+    examType: pickRaw(item, ['ksxzmc', 'ksxz', 'kslxmc', 'kslbmc']),
+  };
+}
+
+/** 选课名单。教师字段是 `jsmc`（不是 `jsxm`）。 */
+export function mapCourseListItem(item: RawRecord): CourseListItem {
+  assertHasAnyField(item, ['kcmc', 'kchmc'], '选课名单条目');
+  return {
+    courseName: pickRaw(item, ['kcmc', 'kchmc']),
+    courseCode: pickRaw(item, ['kch', 'kcbh', 'kcdm']),
+    credit: pickRaw(item, ['xf']),
+    teacher: pickRaw(item, ['jsmc', 'jsxx', 'jsxm', 'rkjs']),
+    teachingClass: pickRaw(item, ['jxbmc', 'jxbdm', 'xkb']),
+  };
+}
+
 export function mapSelectedCourseItem(item: RawRecord): SelectedCourseItem {
   assertHasAnyField(item, ['kcmc', 'kchmc', 'kch_id'], '已选课程条目');
   return {
     courseId: item.kch_id ?? item.kch,
     classId: item.jxb_id ?? item.jxbid,
-    executionId: item.do_jxb_id ?? item.dojxbid,
     title: item.kcmc ?? item.kchmc,
-    teacherId: matchText(item.jsxx, /([0-9]+)\s*\//),
     teacher: matchText(item.jsxx, /\/([^/]+)\//) ?? item.jsmc ?? item.jsxm,
     credit: toNumber(item.xf),
     category: item.kklxmc ?? item.kclbmc,
@@ -86,9 +118,6 @@ export function mapSelectedCourseItem(item: RawRecord): SelectedCourseItem {
     selectedNumber: toNumber(item.yxzrs),
     place: cleanHtml(item.jxdd),
     time: cleanHtml(item.sksj),
-    optional: item.zixf === 1 || item.zixf === '1' || item.zixf === true,
-    waiting: item.sxbj,
-    raw: item,
   };
 }
 
@@ -97,8 +126,6 @@ export function mapAcademiaCourseItem(item: RawRecord): AcademiaCourseItem {
   return {
     courseId: item.KCH || '',
     title: item.KCMC || '',
-    englishTitle: item.KCYWMC || '',
-    status: item.XDZT != null ? String(item.XDZT) : undefined,
     credit: toNumber(item.XF),
     category: item.KCLBMC || '',
     nature: item.KCXZMC || '',
@@ -107,7 +134,5 @@ export function mapAcademiaCourseItem(item: RawRecord): AcademiaCourseItem {
     gpa: toNumber(item.JD),
     displayTerm: [item.JYXDXNMC, item.JYXDXQMC].filter(Boolean).join('·'),
     planned: item.SFJHKC === '是',
-    hours: item.XSXXXX || '',
-    raw: item,
   };
 }

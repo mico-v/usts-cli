@@ -17,19 +17,24 @@
  */
 import puppeteer from 'puppeteer';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+
+/**
+ * 状态目录（会话文件所在）复用 CLI 的 `config/paths.ts`，而不是在这里复制一份平台逻辑：
+ * 复制出来的版本一定会和 CLI 漂移，而会话文件是要给 CLI 读的。
+ */
+let sessionFilePath;
+try {
+  ({ sessionFilePath } = await import('../dist/config/paths.js'));
+} catch {
+  console.error('[capture] 需要先构建：请运行 npm run build（本工具复用 dist/config/paths.js 的状态目录逻辑）');
+  process.exit(2);
+}
 
 const TARGET_HOSTS = new Set(['jwgl.usts.edu.cn', 'localhost', '127.0.0.1']);
 const OUT_DIR = path.resolve(process.cwd(), 'captures');
-const STATE_DIR = process.env.USTS_STATE_DIR
-  ? path.resolve(process.env.USTS_STATE_DIR)
-  : process.platform === 'win32'
-    ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'usts-cli')
-    : process.platform === 'darwin'
-      ? path.join(os.homedir(), 'Library', 'Application Support', 'usts-cli')
-      : path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'), 'usts-cli');
-const SESSION_FILE = path.join(STATE_DIR, 'session.json');
+const SESSION_FILE = sessionFilePath();
+const STATE_DIR = path.dirname(SESSION_FILE);
 const NET_LOG = path.join(OUT_DIR, 'network.jsonl');
 const SUMMARY_FILE = path.join(OUT_DIR, 'summary.md');
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -79,7 +84,12 @@ function detectUsername(html) {
 // ---------- 会话持久化 ----------
 async function collectCookies(page) {
   try {
-    sessionOrigin = new URL(page.url()).origin;
+    // 只在教务系统主机上更新 origin。CLI 要求 session.json 的 origin 与
+    // USTS_BASE_URL 精确匹配（ADR-0004），而浏览器会经过 about:blank、CAS 登录域
+    // 或用户顺手打开的其它站点——把那些页面的 origin 写进去，产出的会话文件会被
+    // CLI 静默拒绝，抓包就白做了。
+    const href = page.url();
+    if (onHost(href) && /^https?:/i.test(href)) sessionOrigin = new URL(href).origin;
     const cookies = await page.cookies();
     for (const c of cookies) cookieJar.set(c.name, c.value);
   } catch { /* 页面已关闭 */ }

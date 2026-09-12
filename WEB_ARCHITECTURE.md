@@ -24,12 +24,17 @@
 5. **成功标志**：302 跳转到 `index_initMenu.html`，服务端写入会话 Cookie（JSESSIONID、`__jsluid_s` 等）。后续所有请求必须携带该会话 Cookie。
 6. **注意**：未登录访问任何功能页都会被 `302` 重定向到 `login_slogin.html`（观测到重定向目标为 `http://...`，实际请求仍建议用 `https` 并复用会话 Cookie）。
 
-## 2. 已确认存在的功能模块（已实测：未登录均 302→登录页，或 200 错误页）
+## 2. 已确认存在的功能模块（早期探索表，**未登录行为以 §5/§7 为准**）
+
+> ⚠️ 本表是最早一轮浏览得出的模块清单，其中「未登录 → 302→登录页」是**视图页 GET** 的观测结果。
+> 2026-09 复查后确认：**数据 Action 的 POST 未认证时返回 `HTTP 901` + 空 body**（见 §5），
+> 而非 302。表里两行 `/cjcx/*` 路径是数据 Action，其 302 结论仅对裸 GET 成立。
+> 「需确认哪个为当前启用」这类待办，§7 的实测表已给出答案（`Index` 后缀的那个）。
 
 | 模块 | 视图路径 | 备注 |
 |------|----------|------|
 | 主菜单/首页 | `/xtgl/index_initMenu.html` | 302→登录页 |
-| 个人信息 | `/xsxxxggl/xsxxwh_cxXsxx.html` | 未登录返回「错误提示」独立页（200），需登录 |
+| 个人信息 | `/xsxxxggl/xsxxwh_cxXsxx.html` | 未登录返回「错误提示」独立页（200），需登录；实际查询用 `xsgrxxwh_cxXsgrxx.html` |
 | 成绩查询 | `/cjcx/cjcx_cxDgXscj.html` | 302→登录页 |
 | 成绩查询(个人) | `/cjcx/cjcx_cxXsgrcj.html` | 302→登录页 |
 | 课表查询 | `/kbcx/xskbcx_cxXsKb.html` | 302→登录页 |
@@ -57,10 +62,10 @@
   | 个人课表 | `/kbcx/xskbcx_cxXskbcxIndex.html` | `/kbcx/xskbcx_cxXsgrkb.html`（2026-08 实测，无需刮隐藏字段） | `N2151` |
   | 个人信息 | `/xsxxxggl/xsgrxxwh_cxXsgrxx.html` | （GET 详情页，非 grid） | `N100801` |
 
-- **个人信息（GET 解析）**：`GET /xsxxxggl/xsgrxxwh_cxXsgrxx.html?gnmkdm=N100801&su=<学号>`，页面结构为 `<label>姓名：</label> ... <p class="form-control-static">张三</p>` 的 标签→值 配对；部分字段（学院/专业/班级）值写在 `id="col_jg_id"` / `col_zy_id` / `col_bh_id` 的 div 内，需兜底解析。
+- **个人信息（GET 解析）**：`GET /xsxxxggl/xsgrxxwh_cxXsgrxx.html?gnmkdm=N100801&su=<学号>`，页面结构为 `<label>姓名：</label> ... <p class="form-control-static">张三</p>` 的 标签→值 配对；部分字段（学院/专业/班级）值写在 `id="col_jg_id"` / `col_zy_id` / `col_bh_id` 的 div 内，需兜底解析。客户端在学号未知时（如 `USTS_COOKIES` 注入的会话）**省略 `su` 参数**，服务端按会话识别用户，并从页面把学号补回来。
 - **个人课表**：真实数据接口为 `POST /kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151`，body 仅 `xnm/xqm/kzlx=ck/xsdm/kclbdm/kclxdm`，返回 `{xsxx, sjkList}`（2026-08 实测，无需解析 JS 渲染的网格）。网页周网格单元格为 `id="星期-节次"`；实践/MOOC 等无固定节次的课程在 sjkList 中不带 `xqj/jc`。
 - **会话依赖**：所有请求携带登录会话 Cookie + 合适 `Referer`；`xnm`(学年，如 `2025`)、`xqm`(学期 `3`=秋/`12`=春/`16`=短学期)。
-- **默认学期**：`JwglClient.currentTerm()` 按当前月份推算，与网页一致（2026-08 实测 8 月网页缺省为 `xnm=今年, xqm='3'`）：8~12 月 → `{xnm:今年, xqm:'3'}`；2~7 月 → `{xnm:去年, xqm:'12'}`；1 月 → `{xnm:去年, xqm:'3'}`。
+- **默认学期**：`domain/term.ts` 的 `currentTerm()` 按当前月份推算，与网页一致（2026-08 实测 8 月网页缺省为 `xnm=今年, xqm='3'`）：8~12 月 → `{xnm:今年, xqm:'3'}`；2~7 月 → `{xnm:去年, xqm:'12'}`；1 月 → `{xnm:去年, xqm:'3'}`。
 
 ## 4. 登录实现的关键坑（已实测）
 
@@ -76,13 +81,17 @@
 - **纯脚本登录已实现为 `loginViaScript()`**：GET 登录页 → GET 公钥 → RSA 加密 → POST（失败则同会话重试一次）。登录后 profile/scores/schedule 实测均可正常取数。**不再需要 Puppeteer/Chrome**。
 - **WAF 对短时间内的重复请求做限流**：连续多次登录/查询后会出现 `net::ERR_CONNECTION_CLOSED`（连接层直接重置）。**等待约 30~60 秒后重试即可恢复**。`loginViaScript` 已对连接类错误做最多 3 次退避重试。
 - **验证码**（`yzcskz=3`，连续失败 3 次触发）无法用脚本处理：需 `USTS_COOKIES` 注入或 `npm run capture` 人工登录。
-- 登录后把会话 Cookie 持久化到用户状态目录的 `session.json`（目录 `0700`、文件 `0600`，旧 `.session.json` 自动迁移），后续查询复用同一 Cookie Jar。
+- 登录后把会话 Cookie 持久化到用户状态目录的 `session.json`（目录 `0700`、文件 `0600`，必须带 `origin` 且与 `USTS_BASE_URL` 一致才加载），后续查询复用同一 Cookie Jar。旧版 cwd `.session.json` 不再读取（ADR-0004），仅启动提示清理。
 
 ## 5. 实现注意事项
 
-- `JwglClient` 已实现：`loginViaScript()`（纯脚本 RSA + 双 POST 重试登录，无需浏览器）、安全 `SessionStore`/`CookieJar`、`validateSession()`，以及 `postGrid`/`querySchedule`/`queryClassSchedule`/`getBjkbdyOptions` 等查询方法。
-- **会话校验修正**：直接 GET 视图页（如 `xsxxwh_cxXsxx.html`）即使会话有效也常返回「错误提示」页（缺 `gnmkdm`/参数），因此 `validateSession` 只以「302 重定向到登录页 / 出现『请先登录』『登录超时』 / 登录页 HTML」判定失效，不把「错误提示」当作失效。
-- 后续查询命令：恢复本地会话后直接用同一 Cookie Jar **POST** 到数据 Action（见第 3 节），由业务响应识别会话过期，避免每条命令额外发送预检请求。GET 视图页只在登录复用校验时使用。
+- `JwglClient` 已实现：`loginViaScript()`（纯脚本 RSA + 双 POST 重试登录，无需浏览器）、安全 `SessionStore`/`CookieJar`、`ensureValidSession()`/`probeSession()`（主动校验 + 自动重登），以及 `postGrid`/`querySchedule`/`queryClassSchedule`/`getBjkbdyOptions` 等查询方法。
+- 响应分类与重试语义见 §5 上一条以及 `docs/contracts/jwgl-endpoints.md`。
+- **会话校验：只认正面证据，不靠关键字猜（2026-09 修正）**。未认证时服务端的表现按接口类型分两种，都可以作为「已失效」的**正面证据**：
+  - **数据 Action**（`?doType=query&gnmkdm=...` 的 POST）返回 **`HTTP 901` + 空 body + `Content-Length: 0`**（响应头带 `X-Via-JSL`，即瑞数 WAF 之后的应用层判定）。这是最常见的失效表现，也是主动探针实际会看到的东西。
+  - **视图页 GET** 返回 `302` 跳转到 `login_slogin.html`，或直接返回登录页 HTML。
+  此外，「参数缺失/接口改版」也会被拒（`status=910` 包裹体、「错误提示」独立页），**这两种情况在响应层面与会话失效无法区分**，因此不再用正则猜：`classifyResponse` 把它们标记为 `ambiguous`（抛 `PROTOCOL_CHANGED` + `details.ambiguousSession`），由客户端发起一次探针拿正面证据后再决定是否重登。参考实现：`infrastructure/jwgl/response-policy.ts` + `application/session-manager.ts`。
+- **会话生命周期由状态机管理**（`application/session-manager.ts`）：`ensureValidSession()` 先本地恢复，若不在**信任窗口**内则向成绩查询接口发一次探针（要求返回可解析的 `{items,totalCount}` 才算有效）；确认失效则**自动重新登录并重放一次**原操作，重放边界是公开方法（PDF 多步生成链必须整链重跑）。恢复是单飞的（WAF 对重复登录做连接重置），失败后进入冷却期；`unknown`（网络异常）一律 fail-open，绝不升级为「失效」。探针结果按窗口缓存，因此「每条命令多一次预检」的开销只在窗口过期后发生（默认 5 分钟，`USTS_SESSION_TRUST_MS` 可调）。
 - 验证码仅在连续失败触发；WAF 限流期间暂停请求、稍后重试即可，无需处理验证码。
 
 ## 6. 已实现的 CLI 查询命令（已实测 ✅）
@@ -103,7 +112,7 @@
 - `usts notifications` 已在有效会话下实测：POST `/xtgl/index_cxDbsy.html?doType=query`，请求体使用 `sfyy`、`flag`、`queryModel.showCount/currentPage/sortName/sortOrder` 等字段；当前返回通知数组，本次测试返回 6 条。标题使用 `xxbt`，正文使用 `xxnr`，创建时间使用 `cjsj`。
 - `usts gpa` 与 `usts academia` 已在有效会话下实测：GET `/xsxy/xsxyqk_cxXsxyqkIndex.html?gnmkdm=N105515&layout=default`；页面是 HTML + 前端 JavaScript 模板，**分类树嵌在 JS 模板里**（节点形如 `"名称&nbsp;" + $.i18n.get('yqxf')/* 要求学分 */ + ":N&nbsp;" ... + "<span id='showKc<ID>'>"`），解析出 29 个分类节点（根=年级+专业，下分 通识教育课程/专业教育课程/素质拓展课程 等）。
 - **学业分类明细（2026-08 实测）**：POST `/xsxy/xsxyqk_cxJxzxjhxfyqKcxx.html?gnmkdm=N105515`，body `{xfyqjd_id=<showKc的ID>}`，返回**课程数组**（非 items 包装）。字段：`KCH`/`KCMC`/`KCYWMC`(英文)/`XDZT`(修读状态)/`XF`/`KCLBMC`(类别)/`KCXZMC`(性质)/`CJ`(成绩)/`MAXCJ`(最佳)/`JD`(绩点)/`JYXDXNMC`+`JYXDXQMC`(建议学期)/`SFJHKC`(是否计划)/`XSXXXX`(学时组成)。实测 31 个叶子节点中 18 个有数据（如 思想政治类 8 门、大学英语 4 门）；**汇总节点（语言类/通识必修课/根节点）返回空**。`usts academia --category <名称>` 按名称子串匹配拉取。
-- `scores` 主接口 `cjcx_cxXsgrcj.html` 为空时，自动回退 `cjcx_cxDgXscj.html`（2026-08 实测可用，返回相同 13 门课）。
+- `scores` 主接口 `cjcx_cxXsgrcj.html` **被拒/改版**（`PROTOCOL_CHANGED`）时自动回退 `cjcx_cxDgXscj.html`（2026-08 实测可用，返回相同 13 门课）。注意回退**只针对协议层失败**：空结果是正常情况（新学期就是没成绩），不再为它多发一次请求（2026-09 调整）。
 - **选课板块课列表（zfn `get_block_courses`）暂未实现**：非选课期 `GET /xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default` 只返回静态提示「当前不属于选课阶段」（无 `role=tab`/`kklxdm`/`xkkz_id` 隐藏域），zfn 的多步解析无法落地；需在选课期抓包确认板块 tab 结构后再实现。
 - `scores` 已实跑取回真实数据（10 门课）；`exams`/`courses` 接口契约已确认（该生对应学期暂为空数据，返回空网格）；`profile` 已正确解析出姓名/学号/年级/班级/手机。
 - 课表 `schedule` 因本校课表为 JS 动态加载且其 `xskbcx.js` 被 WAF 拦截，暂未能稳定抓取；后续可尝试从模块 JS 中提取真正的课表数据 Action 或解析 JS 注入的课表变量。

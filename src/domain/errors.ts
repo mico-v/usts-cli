@@ -10,7 +10,6 @@ export type AppErrorCode =
   | 'REMOTE_SERVER_ERROR'
   | 'PROTOCOL_CHANGED'
   | 'FILE_SYSTEM_ERROR'
-  | 'CANCELLED'
   | 'UNKNOWN_ERROR';
 
 export interface AppErrorOptions {
@@ -40,6 +39,20 @@ export function isAppError(value: unknown): value is AppError {
   return value instanceof AppError;
 }
 
+/** 会话失效类错误：调用方可以尝试自动重新登录并重放该操作。 */
+export function isSessionExpired(value: unknown): boolean {
+  return isAppError(value) && (value.code === 'SESSION_EXPIRED' || value.code === 'AUTHENTICATION_REQUIRED');
+}
+
+/**
+ * 「服务端拒绝了请求，但无法区分会话失效与接口被拒/改版」。
+ * 这不是一个结论，而是一个待确认的疑问：调用方应当发起主动探测拿正面证据，
+ * 而不是按消息文本猜测。详见 `infrastructure/jwgl/response-policy.ts`。
+ */
+export function isAmbiguousRejection(value: unknown): boolean {
+  return isAppError(value) && value.details?.ambiguousSession === true;
+}
+
 export function errorMessage(value: unknown, fallback = '未知错误'): string {
   if (value instanceof Error && value.message) return value.message;
   if (typeof value === 'string' && value) return value;
@@ -60,7 +73,6 @@ export function exitCodeForError(value: unknown): number {
     case 'REMOTE_SERVER_ERROR': return 4;
     case 'PROTOCOL_CHANGED': return 5;
     case 'FILE_SYSTEM_ERROR': return 6;
-    case 'CANCELLED': return 130;
     default: return 1;
   }
 }

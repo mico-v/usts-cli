@@ -17,13 +17,12 @@ export interface PersistedSession {
 export interface SessionStore {
   load(): PersistedSession | null;
   save(session: PersistedSession): void;
+  /** 删除持久化会话；返回是否真的删掉了文件（不存在视为成功）。 */
+  remove(): boolean;
 }
 
 export class FileSessionStore implements SessionStore {
-  constructor(
-    readonly filePath = sessionFilePath(),
-    private readonly legacyPath = path.resolve(process.cwd(), '.session.json'),
-  ) {}
+  constructor(readonly filePath = sessionFilePath()) {}
 
   private read(file: string): PersistedSession | null {
     try {
@@ -34,9 +33,12 @@ export class FileSessionStore implements SessionStore {
       const value = raw as Record<string, unknown>;
       if (value.schemaVersion !== undefined && value.schemaVersion !== 1) return null;
       if (!Array.isArray(value.cookies)) return null;
+      // origin 是版本化格式的必需字段：没有它就无法判断这份会话属于哪台主机，
+      // 也就无法安全复用。旧版 cwd/.session.json 正是因为缺这个字段而被退役（ADR-0004）。
+      if (typeof value.origin !== 'string' || !value.origin) return null;
       return {
         schemaVersion: 1,
-        origin: typeof value.origin === 'string' ? value.origin : '',
+        origin: value.origin,
         cookies: value.cookies as StoredCookie[] | [string, string][],
         username: typeof value.username === 'string' ? value.username : undefined,
         loginTime: typeof value.loginTime === 'string' ? value.loginTime : undefined,
@@ -47,13 +49,21 @@ export class FileSessionStore implements SessionStore {
   }
 
   load(): PersistedSession | null {
-    const current = this.read(this.filePath);
-    if (current) return current;
-    if (this.legacyPath === this.filePath) return null;
-    const legacy = this.read(this.legacyPath);
-    if (!legacy) return null;
-    try { fs.chmodSync(this.legacyPath, 0o600); } catch { /* 尽力收紧旧文件权限 */ }
-    return legacy;
+    return this.read(this.filePath);
+  }
+
+  /**
+   * 删除会话文件。文件不在时视为成功（登出应当是幂等的）。
+   * 符号链接仍按链接本身删除，不跟随目标——与 `read()` 拒绝符号链接的理由一致。
+   */
+  remove(): boolean {
+    try {
+      fs.unlinkSync(this.filePath);
+      return true;
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+      throw new AppError('FILE_SYSTEM_ERROR', `无法删除会话文件：${this.filePath}`, { cause });
+    }
   }
 
   save(session: PersistedSession): void {

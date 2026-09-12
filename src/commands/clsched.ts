@@ -12,7 +12,7 @@ import inquirer from 'inquirer';
 import { ClassScheduleGateway } from '../application/ports/jwgl-gateway';
 import { ClassScheduleQuery, ClassScheduleView, SelectOption } from '../types/api';
 import { header, info, success } from '../lib/logger';
-import { ensureSession, resolveTerm, termLabel, reportCommandError } from './_shared';
+import { ensureSession, resolveTerm, termLabel, reportCommandError, assertInteractiveTerminal } from './_shared';
 import { currentTerm } from '../domain/term';
 import { AppError, AppErrorCode } from '../domain/errors';
 
@@ -83,8 +83,10 @@ async function interactiveCascade(
 
   return {
     xnm: t.xnm, xqm: t.xqm,
-    xqhId: t.campus, njdmId: t.grade, jgId: t.college, zyhId: m.v, bhId: cls.value,
-    bh: String(cls.meta?.bh || ''), bj: cls.label, zymc: major.label, jgmc: college.label, njmc: t.grade,
+    xqhId: t.campus, njdmId: t.grade, zyhId: m.v, bhId: cls.value,
+    bh: String(cls.meta?.bh || ''), bj: cls.label, zymc: major.label, jgmc: college.label,
+    // njmc 是「年级名称」，必须是下拉里的显示文本，不能拿 njdm_id 的值充当
+    njmc: view.grades.find((o) => o.value === t.grade)?.label || t.grade,
   };
 }
 
@@ -124,8 +126,9 @@ async function resolveByFlags(
   return {
     xnm, xqm,
     xqhId: campus ? campus.value : view.defaultCampus || '',
-    njdmId: nj, jgId: college.value, zyhId: major.value, bhId: cls.value,
-    bh: String(cls.meta?.bh || ''), bj: cls.label, zymc: major.label, jgmc: college.label, njmc: nj,
+    njdmId: nj, zyhId: major.value, bhId: cls.value,
+    bh: String(cls.meta?.bh || ''), bj: cls.label, zymc: major.label, jgmc: college.label,
+    njmc: view.grades.find((o) => o.value === nj)?.label || nj,
   };
 }
 
@@ -133,6 +136,12 @@ export async function clschedCommand(
   client: ClassScheduleGateway,
   opts: { xnm?: string; xqm?: string; xqh?: string; nj?: string; jg?: string; zy?: string; bh?: string },
 ): Promise<void> {
+  // 参数检查放在会话检查之前：不带 --bh 的调用本质上无法在当前环境完成，
+  // 与其先跑一趟网络再崩在提示符上，不如直接告诉用户该用哪个参数。
+  if (!opts.bh) {
+    assertInteractiveTerminal('班级课表的级联选择', '请改用 --jg/--zy/--bh 指定班级');
+  }
+
   if (!(await ensureSession(client))) return;
   const term = resolveTerm(opts);
   const xnm = term.xnm;

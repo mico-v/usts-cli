@@ -1,5 +1,12 @@
 /**
- * 正方教务系统 API 类型定义
+ * 端口、端点适配器与命令共用的**稳定结果形状**。
+ *
+ * 这里只放「取数之后、展示之前」的中性类型；远端字段名（拼音缩写、`status:910` 之类）
+ * 只允许出现在 `infrastructure/jwgl` 的映射与解析里，不进这一层。字段的注释会标出它
+ * 由哪个远端字段映射而来，方便追查；但字段本身是领域形状，不是远端 DTO。
+ *
+ * 目录名 `types/` 是历史遗留；层级上它位于 `domain/` 之上、`application/` 之下
+ * （见 `docs/architecture.md`）。
  */
 
 import type { AppErrorCode } from '../domain/errors';
@@ -25,7 +32,6 @@ export interface ScoreItem {
   courseNature: string; // 课程性质 kcxzmc
   credit: number | undefined; // 学分 xf
   score: string; // 成绩/等级 cj
-  score100: string; // 百分制成绩 bfzcj
   gpa: number | undefined; // 绩点 jd
   college: string; // 开课学院 jgmc
   teacher: string; // 教师姓名 jsxm
@@ -38,22 +44,23 @@ export interface ScoreItem {
   teachingClass: string; // 教学班 jxbmc
 }
 
-// 考试信息（来源：kscx_cxXsksxx.html；字段因校而异，保留索引签名）
-export type ExamItem = RawFields & {
-  courseName?: string; // 课程名称
-  examTime?: string; // 考试时间
-  location?: string; // 考试地点
-  seat?: string; // 座位号
-  examType?: string; // 考试类型
-};
+// 考试信息（来源：kwgl/kscx_cxXsksxxIndex.html 返回 items；字段因校而异，按候选键映射）
+export interface ExamItem {
+  courseName: string; // 课程名称 kcmc
+  examTime: string; // 考试时间 kssj
+  location: string; // 考试地点 cdmc
+  seat: string; // 座位号 zwh
+  examType: string; // 考试类型 ksxzmc
+}
 
-// 选课名单项（来源：xkmdcx_cxXkmdcx.html；保留索引签名）
-export type CourseListItem = RawFields & {
-  courseName?: string;
-  teacher?: string;
-  credit?: string;
-  courseCode?: string;
-};
+// 选课名单项（来源：xkcx/xkmdcx_cxXkmdcxIndex.html 返回 items）
+export interface CourseListItem {
+  courseName: string; // 课程名称 kcmc
+  courseCode: string; // 课程号 kch
+  credit: string; // 学分 xf
+  teacher: string; // 教师 jsmc（不是 jsxm）
+  teachingClass: string; // 教学班 jxbmc
+}
 
 // 课表项（来源：xskbcx_cxXsKb.html 的 sjkList）
 export interface ScheduleItem {
@@ -99,7 +106,6 @@ export interface ClassScheduleQuery {
   xqm: string;
   xqhId: string;  // 校区 id，如 '2'=石湖
   njdmId: string; // 年级 id，如 '2025'
-  jgId: string;   // 学院 id，如 '204'
   zyhId: string;  // 专业 id，如 '0107'
   bhId: string;   // 班级 id
   bh: string;     // 班级编号（bjkbdy_cxBjKb.html 必需，且须与 bhId 对应，缺了返回空）
@@ -118,9 +124,7 @@ export interface ClassScheduleItem {
   jxbzc?: string;         // 教学班组成（班级）
   campus?: string;        // xqmc 校区
   room?: string;          // cdmc 教室
-  roomType?: string;      // cdlbmc 场地类别
   credit?: number;        // xf
-  totalHours?: number;    // kczxs 课程总学时
   weeks?: string;         // zcd 周次
   assessMethod?: string;  // khfsmc 考核方式
   courseNature?: string;  // kcxzjc 必修/选修
@@ -134,21 +138,17 @@ export interface ClassScheduleView {
   colleges: SelectOption[];
   campuses: SelectOption[];
   grades: SelectOption[];
-  pyccdms: SelectOption[];
   defaultGrade: string;
   defaultCampus: string;
 }
 
 // 首页待办/通知
 export interface NotificationItem {
-  id?: string;
   title?: string;
   type?: string;
   content?: string;
   createdAt?: string;
   unread?: boolean;
-  url?: string;
-  raw?: RawFields;
 }
 
 // 学业情况页面中的 GPA/学分概览
@@ -167,15 +167,12 @@ export interface AcademiaCategory {
   earnedCredits?: number;
   missingCredits?: number;
   detailAvailable?: boolean;
-  raw?: unknown;
 }
 
 // 学业分类明细课程（来源：xsxyqk_cxJxzxjhxfyqKcxx.html?gnmkdm=N105515 返回数组）
 export interface AcademiaCourseItem {
   courseId?: string;     // KCH 课程号
   title?: string;        // KCMC 课程名称
-  englishTitle?: string; // KCYWMC 英文名称
-  status?: string;       // XDZT 修读状态（3=未修/4=已修？，按数字字符串保留）
   credit?: number;       // XF 学分
   category?: string;     // KCLBMC 课程类别（通识教育/专业教育/素质拓展）
   nature?: string;       // KCXZMC 课程性质（必修/任选）
@@ -184,8 +181,6 @@ export interface AcademiaCourseItem {
   gpa?: number;          // JD 绩点
   displayTerm?: string;  // JYXDXNMC + JYXDXQMC 建议修读学年·学期
   planned?: boolean;     // SFJHKC 是否计划课程
-  hours?: string;        // XSXXXX 学时组成
-  raw?: RawFields;
 }
 
 export interface AcademiaSummary {
@@ -206,17 +201,12 @@ export interface AcademiaSummary {
 export interface SelectedCourseItem {
   courseId?: string;
   classId?: string;
-  executionId?: string;
   title?: string;
   teacher?: string;
-  teacherId?: string;
   credit?: number;
   category?: string;
   capacity?: number;
   selectedNumber?: number;
   place?: string;
   time?: string;
-  optional?: boolean;
-  waiting?: string;
-  raw?: RawFields;
 }

@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { Command } from 'commander';
 import { JwglClient } from './lib/client';
 import { loginCommand } from './commands/login';
+import { logoutCommand } from './commands/logout';
 import { scoresCommand } from './commands/scores';
 import { examsCommand } from './commands/exams';
 import { coursesCommand } from './commands/courses';
@@ -17,27 +20,42 @@ import { academiaPdfCommand } from './commands/academia-pdf';
 import { interactiveShell } from './commands/interactive';
 import { loadEnv } from './lib/env';
 import { DEFAULT_BASE_URL, loadConfig } from './config/config';
+import { legacySessionFilePath } from './config/paths';
 import { error, warning } from './lib/logger';
 import { errorMessage, exitCodeForError } from './domain/errors';
 
-loadEnv();
-let baseUrl = DEFAULT_BASE_URL;
-let startupError: unknown;
-let startupWarnings: string[] = [];
-try {
-  const config = loadConfig();
-  baseUrl = config.baseUrl;
-  startupWarnings = config.warnings;
-} catch (cause) {
-  startupError = cause;
+/** 版本号从包根目录的 package.json 读取，避免与 package.json 漂移。 */
+function packageVersion(): string {
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    const version = (parsed as { version?: unknown }).version;
+    return typeof version === 'string' ? version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
 }
+
+/**
+ * 旧版 cwd/.session.json 自 ADR-0004 起不再被读取：该格式没有 origin 字段，
+ * 从任意目录读取等于允许该目录向登录态注入 Cookie。这里只检测并提示，不代用户删除。
+ */
+function warnAboutLegacySession(): void {
+  const legacy = legacySessionFilePath();
+  if (!fs.existsSync(legacy)) return;
+  console.error(warning(
+    `检测到旧版会话文件 ${legacy}，出于安全考虑已不再读取。请删除该文件后重新运行 usts login。`,
+  ));
+}
+
+// 配置在 main() 里加载：模块导入阶段不该有读 .env / 读磁盘的副作用。
+let baseUrl = DEFAULT_BASE_URL;
 
 const program = new Command();
 
 program
   .name('usts')
   .description('苏州科技大学教务系统（正方 V9）命令行工具')
-  .version('1.0.0')
   .addHelpText('after', `
   快速开始:
     1) usts login                首次使用先登录（会话保存到用户状态目录）
@@ -66,6 +84,17 @@ program
     const ok = await loginCommand(client);
     if (ok) process.exitCode = 0;
     else if (!process.exitCode) process.exitCode = 1;
+  });
+
+program
+  .command('logout')
+  .description('退出登录（删除本地保存的会话）')
+  .addHelpText('after', `
+  说明:
+    只清除本地会话文件与内存中的 Cookie，幂等（本来没登录也算成功）。
+    服务端会话不受影响，会在其有效期内继续可用；如需立即失效请在浏览器中退出登录。`)
+  .action(() => {
+    logoutCommand(new JwglClient(baseUrl));
   });
 
 // 学期选项（成绩/考试/课表/选课名单共用）
@@ -209,7 +238,9 @@ addTermOptions(
   program
     .command('schedule-pdf')
     .description('下载个人课表 PDF（只读）')
-    .option('-o, --output <文件>', '输出文件路径', 'schedule.pdf')
+    // 默认文件名由命令层决定（带学年的 schedule-<学年>-<学期>.pdf）：
+    // 这里再写一个默认值会把命令里的兜底变成永远走不到的死代码。
+    .option('-o, --output <文件>', '输出文件路径（缺省 schedule-<学年>-<学期>.pdf）')
     .option('--force', '覆盖已有文件')
     .action(async (opts) => {
       await schedulePdfCommand(new JwglClient(baseUrl), opts);
@@ -219,7 +250,7 @@ addTermOptions(
 program
   .command('academia-pdf')
   .description('下载成绩总表 PDF（只读）')
-  .option('-o, --output <文件>', '输出文件路径', 'transcript.pdf')
+  .option('-o, --output <文件>', '输出文件路径（缺省 transcript.pdf）')
   .option('--force', '覆盖已有文件')
   .action(async (opts) => {
     await academiaPdfCommand(new JwglClient(baseUrl), opts);
@@ -227,8 +258,17 @@ program
 
 // 无子命令时进入交互式终端；指定子命令（如 usts scores）则按原 CLI 模式运行
 async function main(): Promise<void> {
-  if (startupError) throw startupError;
-  for (const message of startupWarnings) console.error(warning(message));
+  const env = loadEnv();
+  if (env.rejected.length) {
+    console.error(warning(
+      `配置文件 ${env.path} 中的 ${env.rejected.join('、')} 已被忽略：放宽信任边界的开关只能来自真实环境变量，不能写在配置文件里。`,
+    ));
+  }
+  const config = loadConfig();
+  baseUrl = config.baseUrl;
+  for (const message of config.warnings) console.error(warning(message));
+  warnAboutLegacySession();
+  program.version(packageVersion());
   if (process.argv.length <= 2) await interactiveShell(baseUrl);
   else await program.parseAsync(process.argv);
 }
