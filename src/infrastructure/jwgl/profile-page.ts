@@ -1,4 +1,4 @@
-import { ProfileInfo } from '../../types/api';
+import { ProfileInfo } from '../../types/identity';
 
 /**
  * 解析个人信息详情页。

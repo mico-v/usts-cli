@@ -45,7 +45,7 @@
 
 ## 3. 数据接口模式（已实测 ✅）
 
-正方 V-9 数据接口统一规律（已在 live 站点逐模块验证，见 `src/lib/client.ts` 的 `postGrid`/`queryProfile`/`querySchedule`）：
+正方 V-9 数据接口统一规律（已在 live 站点逐模块验证，见 `src/infrastructure/jwgl/grid.ts` 的 `postGrid` 与各端点模块（`records.ts`/`schedule.ts`））：
 
 - **列表类（jqGrid）通用契约**：
   - `POST` 到**业务 action 路径**，URL 带 `?doType=query&gnmkdm=<功能码>`（2026-08 实测：不传 `su`，服务端按会话识别用户）。

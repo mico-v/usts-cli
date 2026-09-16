@@ -15,9 +15,9 @@
  *    （见 CLAUDE.md），并发的失败请求各自发起一次登录会直接把账号打进限流。
  */
 import { RecoveryResult, SessionLookup, SessionState } from '../domain/session';
-import { LoginResponse } from '../types/api';
+import { LoginResponse } from '../types/identity';
 
-/** 会话状态机需要的 I/O 能力，由适配器（`JwglClient`）实现。 */
+/** 会话状态机需要的 I/O 能力，由适配器（`infrastructure/jwgl/gateway.ts` 的 `JwglGateway`）实现。 */
 export interface SessionPort {
   /** 只从本地恢复会话，不发起网络请求。 */
   restoreSession(): boolean;

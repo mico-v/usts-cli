@@ -1,5 +1,5 @@
 import { AuthenticatedTransport, FORM_CONTENT_TYPE } from '../http/authenticated-transport';
-import { ClassScheduleItem, ClassScheduleQuery, ClassScheduleView, ScheduleItem, SelectOption } from '../../types/api';
+import { ClassScheduleItem, ClassScheduleQuery, ClassScheduleView, ScheduleItem, SelectOption } from '../../types/schedule';
 import { buildClassScheduleBody, parseBjkbdyOptions } from './class-schedule-page';
 import { formBody } from './form';
 import { mapClassScheduleItem, mapScheduleItem } from './mappers';

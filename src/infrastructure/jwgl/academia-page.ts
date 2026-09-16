@@ -1,4 +1,4 @@
-import { AcademiaCategory, AcademiaSummary, GpaSummary } from '../../types/api';
+import { AcademiaCategory, AcademiaSummary, GpaSummary } from '../../types/academia';
 import { cleanHtml, extractVisibleText, matchText, toNumber } from './value';
 
 /**

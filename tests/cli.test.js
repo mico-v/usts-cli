@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const { loginCommand } = require('../dist/commands/login');
+const { loginCommand } = require('../dist/cli/login');
 
 const ENTRY = path.resolve(__dirname, '../dist/index.js');
 const INHERITED_USTS_KEYS = Object.keys(process.env).filter((key) => key.startsWith('USTS_'));
@@ -277,7 +277,7 @@ test('每个命令的 --help 都带有详细说明', (t) => {
     const result = runCli(t, root, { args: [name, '--help'] });
     if (!result) return;
     assert.equal(result.status, 0, `${name} --help 应当成功`);
-    assert.match(result.stdout, /示例:|说明:/, `${name} --help 应当带回详细说明（检查 COMMAND_HELP 是否漏了这一项）`);
+    assert.match(result.stdout, /示例:|说明:/, `${name} --help 应当带回详细说明（检查 registry.ts 里该 spec 的 help 字段）`);
     assert.doesNotMatch(result.stdout, /undefined/, `${name} --help 不得漏出内部值`);
   }
 });

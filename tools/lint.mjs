@@ -28,8 +28,8 @@ for (const relative of SOURCE_ROOTS) {
       if (/\t/.test(line)) errors.push(`${display}:${index + 1}: 使用了 Tab 缩进`);
     });
     if (display.startsWith('src/') && /from ['"]axios['"]/.test(source)) {
-      const allowed = display === 'src/lib/client.ts' || display.startsWith('src/infrastructure/http/');
-      if (!allowed) errors.push(`${display}: Axios 只能出现在 HTTP 基础设施或兼容 façade 中`);
+      const allowed = display === 'src/infrastructure/jwgl/gateway.ts' || display.startsWith('src/infrastructure/http/');
+      if (!allowed) errors.push(`${display}: Axios 只能出现在 HTTP 基础设施或网关适配器中`);
     }
   }
 }

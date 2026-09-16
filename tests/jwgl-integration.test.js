@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { JwglClient } = require('../dist/lib/client');
+const { JwglGateway } = require('../dist/infrastructure/jwgl/gateway');
 
 const BASE_PATH = '/jwglxt';
 
@@ -153,7 +153,7 @@ async function setup(t, { trustMs = '0', credentials = true, staleResponse = 're
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  return { client: new JwglClient(baseUrl), state, baseUrl, stateDir };
+  return { client: new JwglGateway(baseUrl), state, baseUrl, stateDir };
 }
 
 test('会话失效时自动重新登录并重放原查询', async (t) => {
@@ -197,7 +197,7 @@ test('自动重登后新会话被持久化，后续运行无需再次登录', as
   const saved = JSON.parse(fs.readFileSync(path.join(stateDir, 'session.json'), 'utf8'));
   assert.equal(saved.cookies[0].value, 'sid-1', '持久化的必须是重登后拿到的新会话');
 
-  const reused = new JwglClient(baseUrl);
+  const reused = new JwglGateway(baseUrl);
   assert.equal(reused.restoreSession(), true);
   const items = await reused.queryScores('2026', '3');
   assert.equal(items.length, 1);
@@ -250,7 +250,7 @@ test('信任窗口内的会话不做主动探测', async (t) => {
 test('本地没有可用会话时报告 missing，不误报为失效', async (t) => {
   await setup(t);
   // 会话文件绑定 Origin：换了 Base URL 就不再可用，也不该被当成「会话失效」
-  const other = new JwglClient('http://127.0.0.1:1/jwglxt');
+  const other = new JwglGateway('http://127.0.0.1:1/jwglxt');
   assert.equal(await other.ensureValidSession(), 'missing');
   assert.equal(other.lastRecovery(), undefined, 'missing 不应触发任何重登尝试');
 });

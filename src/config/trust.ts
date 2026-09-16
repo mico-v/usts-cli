@@ -6,7 +6,7 @@
  * （允许向非受信主机发凭据、允许明文 HTTP），一旦配置文件能改写它们，就等于让文件
  * 自己解除自己的限制——文件比 shell 环境更容易被复制、同步、随项目分发。
  *
- * 单独成模块是为了避开依赖环：`lib/env.ts` 写入快照，`config/config.ts` 读取它。
+ * 单独成模块是为了避开依赖环：`config/env.ts` 写入快照，`config/config.ts` 读取它。
  */
 export const PRIVILEGED_ENV_KEYS = ['USTS_ALLOW_CUSTOM_HOST', 'USTS_ALLOW_INSECURE_HTTP'] as const;
 

@@ -1,5 +1,5 @@
 import { AuthenticatedTransport } from '../http/authenticated-transport';
-import { AcademiaCourseItem, AcademiaSummary, GpaSummary } from '../../types/api';
+import { AcademiaCourseItem, AcademiaSummary, GpaSummary } from '../../types/academia';
 import { parseAcademiaSummary, parseGpaSummary } from './academia-page';
 import { formBody } from './form';
 import { mapAcademiaCourseItem } from './mappers';

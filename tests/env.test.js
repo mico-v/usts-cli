@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { loadEnv } = require('../dist/lib/env');
+const { loadEnv } = require('../dist/config/env');
 
 function withConfigFile(t, content) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'usts-env-test-'));

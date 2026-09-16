@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { executeWithRetry, createHttpClient, DEFAULT_REQUEST_TIMEOUT_MS, DOWNLOAD_REQUEST_TIMEOUT_MS } = require('../dist/infrastructure/http/transport');
-const { formatRetryNotice } = require('../dist/lib/client');
+const { formatRetryNotice } = require('../dist/cli/create-client');
 
 /** axios 的真实超时错误形状：code 是 ECONNABORTED，而 message 里并不含 code 文本。 */
 function timeoutError() {

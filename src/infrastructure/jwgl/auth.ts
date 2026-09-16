@@ -1,5 +1,5 @@
 import { AuthenticatedTransport, FORM_CONTENT_TYPE } from '../http/authenticated-transport';
-import { LoginResponse } from '../../types/api';
+import { LoginResponse } from '../../types/identity';
 import { SessionState } from '../../domain/session';
 import { errorMessage, isAppError } from '../../domain/errors';
 import { currentTerm } from '../../domain/term';

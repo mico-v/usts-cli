@@ -2,8 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { AppError } = require('../dist/domain/errors');
-const { printJsonEnvelope } = require('../dist/lib/format');
-const { reportCommandError } = require('../dist/commands/_shared');
+const { printJsonEnvelope } = require('../dist/cli/format');
+const { reportCommandError } = require('../dist/cli/_shared');
 
 test('JSON success output uses a versioned envelope', () => {
   const original = console.log;

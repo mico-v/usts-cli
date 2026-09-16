@@ -1,20 +1,17 @@
-import {
-  AcademiaCourseItem,
-  AcademiaSummary,
-  ClassScheduleItem,
-  ClassScheduleQuery,
-  ClassScheduleView,
-  CourseListItem,
-  ExamItem,
-  GpaSummary,
-  LoginResponse,
-  NotificationItem,
-  ProfileInfo,
-  ScheduleItem,
-  ScoreItem,
-  SelectOption,
-  SelectedCourseItem,
-} from '../../types/api';
+/**
+ * 应用端口（ADR-0006）
+ *
+ * 命令与用例只依赖**窄接口**，不依赖适配器类：这样单测可以用假网关，不需要 HTTP、
+ * 不需要假服务器。
+ *
+ * 端口不逐个手写，而是从 `JwglPort`（完整网关表面）用 `Pick` 派生：手写 13 个
+ * 「会话能力 + 一个方法」的接口会随命令数线性增长，而 `Pick` 零运行时代价、
+ * 单测里的 fake 依旧只需要实现用到的那一两个方法。
+ */
+import { AcademiaCourseItem, AcademiaSummary, GpaSummary } from '../../types/academia';
+import { LoginResponse, ProfileInfo } from '../../types/identity';
+import { CourseListItem, ExamItem, NotificationItem, ScoreItem, SelectedCourseItem } from '../../types/records';
+import { ClassScheduleItem, ClassScheduleQuery, ClassScheduleView, ScheduleItem, SelectOption } from '../../types/schedule';
 import { LocalSessionInfo, RecoveryResult, SessionLookup, SessionState } from '../../domain/session';
 
 /** 所有业务网关共有的会话能力。 */
@@ -41,11 +38,15 @@ export interface SessionGateway {
   lastRecovery(): RecoveryResult | undefined;
 }
 
+/**
+ * 认证与会话管理：登录/登出/注入 Cookie。
+ * 比 `SessionGateway` 宽，只有 `cli/login.ts` 与 `cli/logout.ts` 需要。
+ */
 export interface AuthGateway extends SessionGateway {
   setCookies(raw: string): void;
   /** 清空 Cookie Jar（注入的 Cookie 不可用时，避免污染后续的账号密码登录）。 */
   clearCookies(): void;
-  /** 记录一次成功认证（登录时间/学号），供会话信任窗口与 `su` 参数使用。 */
+  /** 记录一次成功认证（登录时间/学号），供会话信任窗口使用。 */
   markAuthenticated(username?: string): void;
   saveSession(): void;
   loginViaScript(username: string, password: string): Promise<LoginResponse>;
@@ -58,54 +59,44 @@ export interface AuthGateway extends SessionGateway {
   logout(): boolean;
 }
 
-export interface ScoresGateway extends SessionGateway {
+/** 完整网关表面：命令级端口全部由它 `Pick` 派生。 */
+export interface JwglPort extends SessionGateway {
+  /** 学生成绩（主接口被拒时适配器内部回退备用接口） */
   queryScores(xnm?: string, xqm?: string, extra?: Record<string, string>): Promise<ScoreItem[]>;
-}
-
-export interface ExamsGateway extends SessionGateway {
   queryExams(xnm?: string, xqm?: string): Promise<ExamItem[]>;
-}
-
-export interface CourseListGateway extends SessionGateway {
   queryCourseList(xnm?: string, xqm?: string): Promise<CourseListItem[]>;
-}
-
-export interface ScheduleGateway extends SessionGateway {
-  querySchedule(xnm?: string, xqm?: string): Promise<ScheduleItem[]>;
-}
-
-export interface ProfileGateway extends SessionGateway {
+  /** 个人信息（顺带补上学号：注入的 Cookie 会话没有学号） */
   queryProfile(): Promise<ProfileInfo>;
-}
-
-export interface ClassScheduleGateway extends SessionGateway {
+  querySchedule(xnm?: string, xqm?: string): Promise<ScheduleItem[]>;
+  /** 班级课表视图页的选单选项 */
   getBjkbdyOptions(): Promise<ClassScheduleView>;
   getMajorsByCollege(jgId: string): Promise<SelectOption[]>;
   getClassesByMajor(jgId: string, zyhId: string, njdmId: string): Promise<SelectOption[]>;
   queryClassSchedule(query: ClassScheduleQuery): Promise<{ items: ClassScheduleItem[]; practice: string[] }>;
-}
-
-export interface NotificationsGateway extends SessionGateway {
   queryNotifications(): Promise<NotificationItem[]>;
-}
-
-export interface GpaGateway extends SessionGateway {
   queryGpa(): Promise<GpaSummary>;
-}
-
-export interface AcademiaGateway extends SessionGateway {
   queryAcademia(): Promise<AcademiaSummary>;
   queryAcademiaCategory(categoryId: string): Promise<AcademiaCourseItem[]>;
-}
-
-export interface SelectedCoursesGateway extends SessionGateway {
   querySelectedCourses(xnm?: string, xqm?: string): Promise<SelectedCourseItem[]>;
-}
-
-export interface ScheduleDocumentGateway extends SessionGateway {
   downloadSchedulePdf(xnm: string, xqm: string, name?: string): Promise<Buffer>;
-}
-
-export interface AcademiaDocumentGateway extends SessionGateway {
   downloadAcademiaPdf(): Promise<Buffer>;
 }
+
+/** 会话能力的键集合：每个命令级端口都带上它，因为命令入口都要 `ensureSession`。 */
+type SessionCapability = keyof SessionGateway;
+
+export type ScoresGateway = Pick<JwglPort, SessionCapability | 'queryScores'>;
+export type ExamsGateway = Pick<JwglPort, SessionCapability | 'queryExams'>;
+export type CourseListGateway = Pick<JwglPort, SessionCapability | 'queryCourseList'>;
+export type ProfileGateway = Pick<JwglPort, SessionCapability | 'queryProfile'>;
+export type ScheduleGateway = Pick<JwglPort, SessionCapability | 'querySchedule'>;
+export type ClassScheduleGateway = Pick<
+  JwglPort,
+  SessionCapability | 'getBjkbdyOptions' | 'getMajorsByCollege' | 'getClassesByMajor' | 'queryClassSchedule'
+>;
+export type NotificationsGateway = Pick<JwglPort, SessionCapability | 'queryNotifications'>;
+export type GpaGateway = Pick<JwglPort, SessionCapability | 'queryGpa'>;
+export type AcademiaGateway = Pick<JwglPort, SessionCapability | 'queryAcademia' | 'queryAcademiaCategory'>;
+export type SelectedCoursesGateway = Pick<JwglPort, SessionCapability | 'querySelectedCourses'>;
+export type ScheduleDocumentGateway = Pick<JwglPort, SessionCapability | 'downloadSchedulePdf'>;
+export type AcademiaDocumentGateway = Pick<JwglPort, SessionCapability | 'downloadAcademiaPdf'>;

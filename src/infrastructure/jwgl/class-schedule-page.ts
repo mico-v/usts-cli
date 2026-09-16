@@ -1,4 +1,4 @@
-import { ClassScheduleQuery, ClassScheduleView, SelectOption } from '../../types/api';
+import { ClassScheduleQuery, ClassScheduleView, SelectOption } from '../../types/schedule';
 import { academicYearName, displaySemester } from '../../domain/term';
 
 /**

@@ -1,5 +1,6 @@
 import { AuthenticatedTransport, FORM_CONTENT_TYPE } from '../http/authenticated-transport';
-import { CourseListItem, ExamItem, NotificationItem, ProfileInfo, ScoreItem, SelectedCourseItem } from '../../types/api';
+import { ProfileInfo } from '../../types/identity';
+import { CourseListItem, ExamItem, NotificationItem, ScoreItem, SelectedCourseItem } from '../../types/records';
 import { isAmbiguousRejection, isAppError } from '../../domain/errors';
 import { postGrid } from './grid';
 import { formBody } from './form';

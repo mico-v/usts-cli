@@ -1,12 +1,6 @@
-import {
-  AcademiaCourseItem,
-  ClassScheduleItem,
-  CourseListItem,
-  ExamItem,
-  ScheduleItem,
-  ScoreItem,
-  SelectedCourseItem,
-} from '../../types/api';
+import { AcademiaCourseItem } from '../../types/academia';
+import { CourseListItem, ExamItem, ScoreItem, SelectedCourseItem } from '../../types/records';
+import { ClassScheduleItem, ScheduleItem } from '../../types/schedule';
 import { assertHasAnyField, cleanHtml, matchText, parseSections, RawRecord, toNumber } from './value';
 
 function pickRaw(item: RawRecord, keys: string[]): string {

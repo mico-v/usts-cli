@@ -30,7 +30,7 @@ export interface ReadableResponse {
  * `ambiguous` 是这套设计的关键：正方在会话失效与「参数缺失/接口改版」两种情况下
  * 都会返回「错误提示」独立页或 `{status:910}` 包裹体，**两者在响应层面不可区分**。
  * 与其用正则猜（猜错的两个方向都代价很高），不如把这个结论标记出来，
- * 交由上层发起一次主动探测拿正面证据。参见 `JwglClient.confirmSessionExpiry()`。
+ * 交由上层发起一次主动探测拿正面证据。参见 `SessionManager.confirmExpired()`。
  */
 export type ResponseVerdict =
   | 'ok'
