@@ -24,8 +24,8 @@
   },
   "files": [
     "dist",
-    "README.md",
-    "WEB_ARCHITECTURE.md"
+    "!dist/**/*.js.map",
+    "README.md"
   ],
   "keywords": [
     "zhifang",

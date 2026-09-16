@@ -18,6 +18,7 @@ import { selectedCoursesCommand } from './commands/selected-courses';
 import { schedulePdfCommand } from './commands/schedule-pdf';
 import { academiaPdfCommand } from './commands/academia-pdf';
 import { interactiveShell } from './commands/interactive';
+import { HELP_TOPIC_INDEX, commandHelp, helpCommand } from './commands/help';
 import { loadEnv } from './lib/env';
 import { DEFAULT_BASE_URL, loadConfig } from './config/config';
 import { legacySessionFilePath } from './config/paths';
@@ -55,30 +56,39 @@ const program = new Command();
 
 program
   .name('usts')
-  .description('苏州科技大学教务系统（正方 V9）命令行工具')
+  .description('苏州科技大学教务系统（正方 V9）命令行工具（只读查询）')
+  // 关掉内置的 help 命令，换成自己实现的：除了命令帮助，还提供 `usts help <主题>`
+  // 的详细文档（配置、会话、学期、输出契约、下载、排错）。见 commands/help.ts。
+  .addHelpCommand(false)
   .addHelpText('after', `
   快速开始:
     1) usts login                首次使用先登录（会话保存到用户状态目录）
     2) usts scores               查询当前学期成绩
     3) usts profile              查看当前登录的个人信息
 
-  通用学期参数（scores/exams/courses/schedule 可用）:
+  通用学期参数（scores/exams/courses/schedule 等可用）:
     -y, --xnm <学年>   学年，如 2025
     -t, --xqm <学期>   3=第一学期, 12=第二学期, 16=第三学期
-    缺省时自动取当前学期（8月~次年1月为第一学期；2~7月为第二学期）。
+    缺省时自动取当前学期，详见: usts help term
+
+  详细文档:
+${HELP_TOPIC_INDEX}
+
+  不带任何子命令运行 usts 会进入交互式菜单（需要真实终端）。
 
   更多用法见各命令的 --help，例如: usts scores --help`);
 
 program
+  .command('help [主题]')
+  .description('查看详细文档（主题见 usts help，也可直接写命令名）')
+  .action((topic: string | undefined) => {
+    helpCommand(topic, program);
+  });
+
+program
   .command('login')
   .description('登录教务系统（纯脚本 RSA + 双 POST 重试，无需浏览器；会话安全持久化）')
-  .addHelpText('after', `
-  示例:
-    usts login                  自动用 .env 中的 USTS_USERNAME/USTS_PASSWORD 登录
-    usts login                  若 .env 未配置，则交互式输入学号与密码
-  说明:
-    登录成功后会话会保存到用户状态目录，后续查询命令可免登录直接使用。
-    也可通过环境变量 USTS_COOKIES 直接注入浏览器复制的会话 Cookie 跳过登录。`)
+  .addHelpText('after', commandHelp('login'))
   .action(async () => {
     const client = new JwglClient(baseUrl);
     const ok = await loginCommand(client);
@@ -89,10 +99,7 @@ program
 program
   .command('logout')
   .description('退出登录（删除本地保存的会话）')
-  .addHelpText('after', `
-  说明:
-    只清除本地会话文件与内存中的 Cookie，幂等（本来没登录也算成功）。
-    服务端会话不受影响，会在其有效期内继续可用；如需立即失效请在浏览器中退出登录。`)
+  .addHelpText('after', commandHelp('logout'))
   .action(() => {
     logoutCommand(new JwglClient(baseUrl));
   });
@@ -109,10 +116,7 @@ addTermOptions(
     .command('scores')
     .description('查询学生成绩（课程/性质/学分/成绩/绩点/教师/开课学院）')
     .option('--kcxzdm <课程性质>', '按课程性质代码筛选')
-    .addHelpText('after', `
-  示例:
-    usts scores                 查询当前学期成绩
-    usts scores -y 2025 -t 3    查询 2025 学年第一学期成绩`)
+    .addHelpText('after', commandHelp('scores'))
     .action(async (opts) => {
       const client = new JwglClient(baseUrl);
       await scoresCommand(client, opts);
@@ -123,10 +127,7 @@ addTermOptions(
   program
     .command('exams')
     .description('查询考试安排（课程/时间/地点/座位号/类型）')
-    .addHelpText('after', `
-  示例:
-    usts exams                  查询当前学期考试安排
-    usts exams -y 2025 -t 3     查询 2025 学年第一学期考试安排`)
+    .addHelpText('after', commandHelp('exams'))
     .action(async (opts) => {
       const client = new JwglClient(baseUrl);
       await examsCommand(client, opts);
@@ -137,10 +138,7 @@ addTermOptions(
   program
     .command('courses')
     .description('查询选课名单（课程/课程代码/学分/教师/教学班）')
-    .addHelpText('after', `
-  示例:
-    usts courses                查询当前学期选课名单
-    usts courses -y 2025 -t 12  查询 2025 学年第二学期选课名单`)
+    .addHelpText('after', commandHelp('courses'))
     .action(async (opts) => {
       const client = new JwglClient(baseUrl);
       await coursesCommand(client, opts);
@@ -151,12 +149,7 @@ addTermOptions(
   program
     .command('schedule')
     .description('查询个人课表（按星期展示节次/教室/教师）')
-    .addHelpText('after', `
-  示例:
-    usts schedule               查询当前学期课表
-    usts schedule -y 2025 -t 3  查询 2025 学年第一学期课表
-  说明:
-    课表由教务系统前端 JS 动态渲染，本校暂以兜底解析；若返回空请稍后重试或显式指定 -y/-t。`)
+    .addHelpText('after', commandHelp('schedule'))
     .action(async (opts) => {
       const client = new JwglClient(baseUrl);
       await scheduleCommand(client, opts);
@@ -172,11 +165,7 @@ addTermOptions(
     .option('--jg <学院>', '学院：id 或名称')
     .option('--zy <专业>', '专业：id 或名称')
     .option('--bh <班级>', '班级：名称或编号（如 测试班级）')
-    .addHelpText('after', `
-  示例:
-    usts clsched                           交互式级联选择 学院→专业→班级
-    usts clsched -y 2026 -t 3 --jg 204 --zy 0107 --bh 测试班级
-    usts clsched --jg 电子 --zy 计算机 --bh 2512`)
+    .addHelpText('after', commandHelp('clsched'))
     .action(async (opts) => {
       const client = new JwglClient(baseUrl);
       await clschedCommand(client, opts);
@@ -186,9 +175,7 @@ addTermOptions(
 program
   .command('profile')
   .description('查询个人信息（学号/姓名/学院/专业/班级/年级/手机等）')
-  .addHelpText('after', `
-  示例:
-    usts profile                查询当前登录用户的个人信息`)
+  .addHelpText('after', commandHelp('profile'))
   .action(async () => {
     const client = new JwglClient(baseUrl);
     await profileCommand(client);
@@ -198,6 +185,7 @@ program
   .command('gpa')
   .description('查询学业成绩概览（GPA/学分）')
   .option('--json', '以 JSON 输出')
+  .addHelpText('after', commandHelp('gpa'))
   .action(async (opts) => {
     await gpaCommand(new JwglClient(baseUrl), opts);
   });
@@ -206,6 +194,7 @@ program
   .command('notifications')
   .description('查询首页通知和待办事项')
   .option('--json', '以 JSON 输出')
+  .addHelpText('after', commandHelp('notifications'))
   .action(async (opts) => {
     await notificationsCommand(new JwglClient(baseUrl), opts);
   });
@@ -215,11 +204,7 @@ program
   .description('查询学业情况和课程分类概览')
   .option('--json', '以 JSON 输出')
   .option('--category <分类名>', '拉取指定分类的课程明细（如：思想政治类）')
-  .addHelpText('after', `
-  示例:
-    usts academia                      学业概况（GPA/统计/分类学分）
-    usts academia --category 思想政治类   查看该分类下的课程明细
-    usts academia --json               机器可读输出`)
+  .addHelpText('after', commandHelp('academia'))
   .action(async (opts) => {
     await academiaCommand(new JwglClient(baseUrl), opts);
   });
@@ -229,6 +214,7 @@ addTermOptions(
     .command('selected-courses')
     .description('查询已选课程详情（只读）')
     .option('--json', '以 JSON 输出')
+    .addHelpText('after', commandHelp('selected-courses'))
     .action(async (opts) => {
       await selectedCoursesCommand(new JwglClient(baseUrl), opts);
     }),
@@ -242,6 +228,7 @@ addTermOptions(
     // 这里再写一个默认值会把命令里的兜底变成永远走不到的死代码。
     .option('-o, --output <文件>', '输出文件路径（缺省 schedule-<学年>-<学期>.pdf）')
     .option('--force', '覆盖已有文件')
+    .addHelpText('after', commandHelp('schedule-pdf'))
     .action(async (opts) => {
       await schedulePdfCommand(new JwglClient(baseUrl), opts);
     }),
@@ -252,6 +239,7 @@ program
   .description('下载成绩总表 PDF（只读）')
   .option('-o, --output <文件>', '输出文件路径（缺省 transcript.pdf）')
   .option('--force', '覆盖已有文件')
+  .addHelpText('after', commandHelp('academia-pdf'))
   .action(async (opts) => {
     await academiaPdfCommand(new JwglClient(baseUrl), opts);
   });

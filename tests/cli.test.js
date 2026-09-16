@@ -237,3 +237,47 @@ test('login 失败时错误走 stderr，进度提示才走 stdout', async () => 
     }
   }
 });
+
+test('usts help 提供详细文档：主题、中文别名与命令帮助', (t) => {
+  const root = tempRoot(t, 'usts-cli-help-');
+
+  // 不带主题 = 主帮助；必须列出可用主题，而不只是 commands 表
+  const overview = runCli(t, root, { args: ['help'] });
+  if (!overview) return;
+  assert.equal(overview.status, 0);
+  assert.match(overview.stdout, /usts help config/);
+
+  const config = runCli(t, root, { args: ['help', 'config'] });
+  assert.equal(config.status, 0);
+  assert.match(config.stdout, /USTS_USERNAME/, '主题文档要给出可配置项');
+  assert.doesNotMatch(config.stdout, /Usage: usts/, '主题文档不是命令帮助');
+
+  const alias = runCli(t, root, { args: ['help', '配置'] });
+  assert.equal(alias.status, 0);
+  assert.match(alias.stdout, /USTS_USERNAME/, '中文别名要能到达同一个主题');
+
+  const command = runCli(t, root, { args: ['help', 'scores'] });
+  assert.equal(command.status, 0);
+  assert.match(command.stdout, /Usage: usts scores/, '主题也可以是命令名');
+
+  const unknown = runCli(t, root, { args: ['help', '不存在的主题'] });
+  assert.equal(unknown.status, 2, '未知主题属于用法错误');
+  assert.match(unknown.stderr, /没有这个帮助主题/);
+  assert.doesNotMatch(unknown.stdout, /Usage: usts \[options\]/, '未知主题不该退回主帮助');
+});
+
+test('每个命令的 --help 都带有详细说明', (t) => {
+  const root = tempRoot(t, 'usts-cli-help-commands-');
+  const commands = [
+    'login', 'logout', 'scores', 'exams', 'courses', 'schedule', 'clsched', 'profile',
+    'gpa', 'notifications', 'academia', 'selected-courses', 'schedule-pdf', 'academia-pdf',
+  ];
+
+  for (const name of commands) {
+    const result = runCli(t, root, { args: [name, '--help'] });
+    if (!result) return;
+    assert.equal(result.status, 0, `${name} --help 应当成功`);
+    assert.match(result.stdout, /示例:|说明:/, `${name} --help 应当带回详细说明（检查 COMMAND_HELP 是否漏了这一项）`);
+    assert.doesNotMatch(result.stdout, /undefined/, `${name} --help 不得漏出内部值`);
+  }
+});
