@@ -1,6 +1,6 @@
 {
   "name": "usts-jwgl",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "正方教务系统 CLI 工具",
   "main": "dist/index.js",
   "bin": {
