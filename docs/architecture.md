@@ -21,9 +21,9 @@ cli -> application/domain <- infrastructure
 - `src/config`：配置解析、信任边界（`trust.ts` 保存启动时的真实环境快照，供 `config.ts` 判定信任开关）和跨平台状态/配置路径。
 - `src/infrastructure/http`：`transport.ts`（连接池、重试与退避策略、超时分类）与 `authenticated-transport.ts`（`AuthenticatedTransport`：Cookie Jar、重试、同源跳转跟随、表单请求头）。Axios 只允许出现在这两处和网关适配器。
 - `src/infrastructure/session`：版本化、安全、原子会话存储。`src/infrastructure/documents`：`FileDocumentStore` —— PDF 落盘的原子写入与 `0600` 权限（端口在 `application/ports/document-store.ts`）。
-- `src/infrastructure/jwgl`：端点适配器（`auth.ts`/`records.ts`/`schedule.ts`/`academia.ts`/`document-api.ts`/`grid.ts`）、响应分类（`response-policy.ts`）、纯页面解析器（`*-page.ts`）、请求体构造（`documents.ts`/`form.ts`/`class-schedule-page.ts`）和领域映射（`mappers.ts`）。这些模块只接收一个 `AuthenticatedTransport`，不含会话状态。
+- `src/infrastructure/jwgl`：端点适配器（`auth.ts`/`records.ts`/`schedule.ts`/`academia.ts`/`facilities.ts`/`planning.ts`/`payments.ts`/`warnings.ts`/`minor-schedule.ts`/`document-api.ts`/`grid.ts`）、响应分类（`response-policy.ts`）、纯页面解析器（`*-page.ts`、以及 `select-options.ts` 这个供班级课表/执行计划/微专业课表共用的下拉解析）、请求体构造（`documents.ts`/`form.ts`/`class-schedule-page.ts`）和领域映射（`mappers.ts`）。这些模块只接收一个 `AuthenticatedTransport`，不含会话状态。
 - `src/infrastructure/jwgl/gateway.ts`：端点适配器 `JwglGateway`——唯一持有传输层与会话状态的类（会话状态、`SessionPort`、`withReauth` 重放边界、对各端点模块的委托）。它不含远端字段名，也不含面向人的文案：重试通知保持结构化上报，文案与输出通道由 `cli/create-client.ts` 绑定。
-- `src/types`：`records.ts` / `academia.ts` / `schedule.ts` / `identity.ts` —— 按输出域拆分的稳定结果形状，端口、适配器与命令共用（`RawFields` 只在 `schedule.ts` 内用于下拉选项的 `meta`）。层级上位于 `domain` 之上、`application` 之下。
+- `src/types`：`records.ts` / `academia.ts` / `schedule.ts` / `identity.ts` / `facilities.ts` / `planning.ts` / `payments.ts` / `warnings.ts` / `minor-programs.ts` —— 按输出域拆分的稳定结果形状，端口、适配器与命令共用（`RawFields` 只在 `schedule.ts` 内用于下拉选项的 `meta`）。层级上位于 `domain` 之上、`application` 之下。
 - `src/shared`：`sanitize.ts` —— 终端输出净化与密钥脱敏，唯一的横切叶子模块。
 - `src/cli`：CLI 编排与展示。`registry.ts` 是**命令描述的唯一出处**（命令名、参数、菜单项、帮助文本、交互式表单、执行体，ADR-0006）；`create-client.ts` 是网关装配点（把结构化重试通知接到 stderr），`logger.ts`/`format.ts` 负责终端文本；`prompts.ts` 与 `clsched-cascade.ts` 是 inquirer 表单片段；`render/*` 只吃用例返回的 view、只往 stdout 写；其余 `*Command` 负责「校验会话 → 调用例 → 渲染 → 错误码」。
 - `tools`：抓包和开发检查，不属于生产运行链路。

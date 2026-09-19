@@ -27,7 +27,16 @@ import { selectedCoursesCommand } from './selected-courses';
 import { schedulePdfCommand } from './schedule-pdf';
 import { DEFAULT_ACADEMIA_PDF_NAME, defaultSchedulePdfName } from '../application/usecases/documents';
 import { academiaPdfCommand } from './academia-pdf';
-import { askOutputPath, askScoreForm, askTerm } from './prompts';
+import { FreeClassOptions, freeClassCommand, DEFAULT_FREE_CLASSROOM_LIMIT } from './freeclass';
+import { warningCommand } from './warning';
+import { PlanOptions, planCommand, DEFAULT_PLAN_LIMIT } from './plan';
+import { paymentCommand } from './payment';
+import { MinorScheduleOptions, minorScheduleCommand } from './minor-schedule';
+import { DEFAULT_MINOR_KIND, MINOR_KIND_NAMES } from '../application/usecases/minor-schedule';
+import {
+  askFreeClassForm, askMinorScheduleForm, askOutputPath, askScoreForm, askTerm,
+} from './prompts';
+import { numericOption } from './_shared';
 import { doc } from './help';
 
 /** 命令在交互式界面里的位置。没有 `menu` 的命令不出现在查询子菜单（如 login/profile）。 */
@@ -101,6 +110,9 @@ export const LOGIN_SPEC = defineCommand<void>({
   run: async (client) => {
     const ok = await loginCommand(client);
     if (ok) process.exitCode = 0;
+    // 兜底而非正常路径：loginCommand 的每条失败路径都会按契约自己设码（3 凭据 / 4 网络 /
+    // 5 协议…）。这条保证的是「万一将来漏设」，失败的登录也绝不静默以 0 退出——
+    // 那会让脚本把一次失败的登录当成成功。
     else if (!process.exitCode) process.exitCode = 1;
   },
 });
@@ -293,8 +305,144 @@ const selectedCoursesSpec = defineCommand<{ xnm: string; xqm: string; json?: boo
   run: (client, opts) => selectedCoursesCommand(client, opts),
 });
 
-const schedulePdfSpec = defineCommand<{ xnm: string; xqm: string; output?: string; force?: boolean }>({
-  id: 'schedule-pdf',
+const freeClassSpec = defineCommand<FreeClassOptions>({
+  id: 'freeclass',
+  summary: '查询空闲教室（可按周次/星期/节次查某时段空闲的场地）',
+  term: true,
+  menu: { label: '空闲教室' },
+  options: (cmd) => cmd
+    .option('--week <周次>', '周次，如 3、1-4、3,5,7')
+    .option('--weekday <星期>', '星期，1=周一 … 7=周日，如 1,3,5')
+    .option('--section <节次>', '节次，如 5 或 5-6')
+    .option('--campus <校区>', '校区名称包含（如 石湖）')
+    .option('--type <类别>', '场地类别名称包含（如 多媒体教室）')
+    .option('--building <楼号>', '楼号名称包含（如 石5）')
+    .option('--name <场地>', '场地名称/编号包含（如 103）')
+    .option('--min-seats <座位数>', '只显示座位数不少于该值的场地', (value) => numericOption(value, '--min-seats', 1))
+    .option('--limit <条数>', '终端最多显示多少条，0=全部（--json 不受影响）', (value) => numericOption(value, '--limit'))
+    .option('--json', '以 JSON 输出'),
+  interactive: (def) => askFreeClassForm(def.academicYear, def.semester),
+  help: doc(`
+    示例:
+      usts freeclass                          当前学期全部场地（默认只显示前 ${DEFAULT_FREE_CLASSROOM_LIMIT} 条）
+      usts freeclass --week 3 --weekday 3 --section 5-6
+                                              第 3 周周三第 5-6 节空闲的教室
+      usts freeclass --building 石5 --min-seats 60
+                                              石 5 楼、座位数 ≥ 60 的场地
+      usts freeclass --type 多媒体教室 --json   机器可读输出
+
+    说明:
+      不带时段参数时列的是该学期**全部场地**；带上 --week/--weekday/--section 后只返回在
+      所选时段**都空闲**的场地——多选是「每段都空」而不是「任意一段空」，这与网页的
+      「空闲场地查询」一致（第 3 周 ∧ 第 4 周 = 两周边都空着的教室）。
+      三个时段参数**必须一起给**（服务端只认齐全的组合，少给一项会退化成不过滤）。
+      星期用 1=周一 … 7=周日；周次/节次支持区间与逗号列表（如 1-4,6）。
+      --campus/--type/--building/--name 按名称子串匹配（大小写不敏感），--min-seats 按座位数。
+      默认只显示前 ${DEFAULT_FREE_CLASSROOM_LIMIT} 条，--limit 0 显示全部；--json 始终输出全集。
+      学期参数见 usts help term。`),
+  run: (client, opts) => freeClassCommand(client, opts),
+});
+
+const warningSpec = defineCommand<{ json?: boolean }>({
+  id: 'warning',
+  summary: '查询学业预警（当前学年学期）',
+  menu: { label: '学业预警' },
+  options: (cmd) => cmd.option('--json', '以 JSON 输出'),
+  help: doc(`
+    示例:
+      usts warning            当前学年学期的学业预警
+      usts warning --json     机器可读输出（见 usts help json）
+
+    说明:
+      该页面由服务端直接渲染结论，不接受学年/学期参数——查的始终是当前学年学期。
+      「有没有预警」按页面**结构**判定（有无明细表），不做关键字匹配；无预警时原样打印
+      页面的结论，有预警时按页面原有的表头成表（列语义尚未在有预警的账号上实测过，
+      因此不做重命名）。`),
+  run: (client, opts) => warningCommand(client, opts),
+});
+
+const planSpec = defineCommand<PlanOptions>({
+  id: 'plan',
+  summary: '查看教学执行计划（默认本专业 + 本年级，可查课程明细）',
+  menu: { label: '教学执行计划' },
+  options: (cmd) => cmd
+    .option('--all', '不按本学院/本年级/本专业过滤，查全校')
+    .option('--college <学院>', '学院：id、全名或名称子串')
+    .option('--grade <年级>', '年级，如 2025')
+    .option('--major <专业>', '专业：id、全名或名称子串')
+    .option('--course [课程号]', '查看课程明细；给了课程号则只看该课程号（支持部分匹配）')
+    .option('--limit <条数>', '终端最多显示多少条，0=全部（--json 不受影响）', (value) => numericOption(value, '--limit'))
+    .option('--json', '以 JSON 输出'),
+  help: doc(`
+    示例:
+      usts plan                          本专业 + 本年级的执行计划
+      usts plan --course                 这条计划的全部课程
+      usts plan --course 2AA31001        只看某个课程号
+      usts plan --grade 2024 --major 计算机
+      usts plan --all --limit 0          全校全部（1882 条，慎用）
+
+    说明:
+      缺省过滤条件来自正方视图页的**预选值**（页面已按当前学生选好学院/年级/专业），
+      比在本地推断学号/专业可靠。--college/--major/--grade 可用 id、全名或名称子串覆盖，
+      --all 取消全部过滤。
+      课程明细挂在单条执行计划下，因此 --course 要求当前条件只匹配到一条计划；多条时
+      请先用 --grade/--major 缩小（逐个拉明细会在 WAF 限流下打出一串请求）。
+      默认只显示前 ${DEFAULT_PLAN_LIMIT} 条，--limit 0 显示全部；--json 始终输出全集。`),
+  run: (client, opts) => planCommand(client, opts),
+});
+
+const paymentSpec = defineCommand<{ xnm: string; xqm: string; json?: boolean }>({
+  id: 'payment',
+  summary: '查询学生缴费记录（只读）',
+  term: true,
+  menu: { label: '学生缴费' },
+  options: (cmd) => cmd.option('--json', '以 JSON 输出'),
+  interactive: (def) => askTerm(def.academicYear, def.semester),
+  help: doc(`
+    示例:
+      usts payment                当前学期缴费记录
+      usts payment -y 2025        2025-2026 学年全部学期
+      usts payment --json         机器可读输出
+
+    说明:
+      **只做查询**。支付、释放缴费中订单、生成订单、退费申请等写接口一律不实现——
+      涉及金钱与不可逆副作用，不在只读 CLI 的范围内。
+      输出学年/学期/类型/缴费项目/金额/状态/缴费时间/缴费期限/订单号。
+      学期参数见 usts help term。`),
+  run: (client, opts) => paymentCommand(client, opts),
+});
+
+const minorScheduleSpec = defineCommand<MinorScheduleOptions>({
+  id: 'minor-schedule',
+  summary: `查询微专业/辅修/二学位课表（默认${DEFAULT_MINOR_KIND}）`,
+  term: true,
+  menu: { label: '微专业课表' },
+  options: (cmd) => cmd
+    .option('--kind <类型>', `课表类型：${MINOR_KIND_NAMES.join(' / ')}（缺省 ${DEFAULT_MINOR_KIND}）`)
+    .option('--college <学院>', '学院：id、全名或名称子串')
+    .option('--grade <年级>', '年级，如 2025')
+    .option('--major <专业>', '专业：id、全名或名称子串')
+    .option('--json', '以 JSON 输出'),
+  interactive: (def) => askMinorScheduleForm(def.academicYear, def.semester),
+  help: doc(`
+    示例:
+      usts minor-schedule                  当前学期微专业课表（缺省类型）
+      usts minor-schedule --kind 辅修       辅修课表
+      usts minor-schedule --college 电子 --major 计算机 --grade 2025
+      usts minor-schedule --college 电子 --json
+
+    说明:
+      --kind 取 ${MINOR_KIND_NAMES.join(' / ')}：${DEFAULT_MINOR_KIND}对应主界面的「微专业课表打印」，
+      因此是缺省值；也可直接写网页编码 02/03/04。
+      班级范围缺省**不过滤**（该视图页未按学生预选学院/年级/专业，实测确认）；
+      --college/--major/--grade 可按 id、全名或名称子串缩小范围。
+      列出的是**课表记录**（学院/年级/专业/课表名称），不是课表里的课程；导出 Excel、
+      预览课表内容尚未实现。
+      学期参数见 usts help term。`),
+  run: (client, opts) => minorScheduleCommand(client, opts),
+});
+
+const schedulePdfSpec = defineCommand<{ xnm: string; xqm: string; output?: string; force?: boolean }>({  id: 'schedule-pdf',
   summary: '下载个人课表 PDF（只读）',
   term: true,
   menu: { label: '下载课表 PDF' },
@@ -359,6 +507,11 @@ export const ALL_SPECS: CommandSpec[] = [
   notificationsSpec,
   academiaSpec,
   selectedCoursesSpec,
+  freeClassSpec,
+  warningSpec,
+  planSpec,
+  paymentSpec,
+  minorScheduleSpec,
   schedulePdfSpec,
   academiaPdfSpec,
 ];

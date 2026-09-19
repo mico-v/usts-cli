@@ -268,9 +268,13 @@ test('usts help 提供详细文档：主题、中文别名与命令帮助', (t) 
 
 test('每个命令的 --help 都带有详细说明', (t) => {
   const root = tempRoot(t, 'usts-cli-help-commands-');
+  // 清单必须与 registry 的 ALL_SPECS 同步：新命令漏进来时，它的 --help 就没人真正跑过
+  // （比如帮助文本里插值出来的 `undefined`）。registry.test.js 锁 id 列表，这里锁「能跑」。
   const commands = [
     'login', 'logout', 'scores', 'exams', 'courses', 'schedule', 'clsched', 'profile',
-    'gpa', 'notifications', 'academia', 'selected-courses', 'schedule-pdf', 'academia-pdf',
+    'gpa', 'notifications', 'academia', 'selected-courses',
+    'freeclass', 'warning', 'plan', 'payment', 'minor-schedule',
+    'schedule-pdf', 'academia-pdf',
   ];
 
   for (const name of commands) {
@@ -279,5 +283,6 @@ test('每个命令的 --help 都带有详细说明', (t) => {
     assert.equal(result.status, 0, `${name} --help 应当成功`);
     assert.match(result.stdout, /示例:|说明:/, `${name} --help 应当带回详细说明（检查 registry.ts 里该 spec 的 help 字段）`);
     assert.doesNotMatch(result.stdout, /undefined/, `${name} --help 不得漏出内部值`);
+    assert.doesNotMatch(result.stdout, /\[object Object\]/, `${name} --help 不得漏出未格式化的对象`);
   }
 });

@@ -8,7 +8,7 @@ export async function academiaCommand(
   client: AcademiaGateway,
   opts: { json?: boolean; category?: string } = {},
 ): Promise<void> {
-  if (!(await ensureSession(client))) return;
+  if (!(await ensureSession(client, { json: opts.json, command: "academia" }))) return;
   try {
     const view = await readAcademia(client, { category: opts.category });
     if (opts.json) {

@@ -40,7 +40,7 @@ test('课表 PDF：目标已存在且未加 --force 时**先**拒绝，不去跑
     () => saveSchedulePdf(client, store, { xnm: '2026', xqm: '3' }),
     (error) => {
       assert.equal(error.code, 'FILE_SYSTEM_ERROR');
-      assert.match(error.message, /目标文件已存在：schedule-2026-3\.pdf（使用 --force 覆盖）/);
+      assert.match(error.message, /目标文件已存在：schedule-2026-3\.pdf（默认不覆盖已有文件）/);
       return true;
     },
   );

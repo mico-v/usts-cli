@@ -8,7 +8,7 @@
 
 ## 交互式模式
 
-无子命令运行（交互式菜单）、`login` 需要输入学号密码、`clsched` 不带 `--bh` 时的级联选择都需要真实终端。stdin 不是终端时（管道、`</dev/null`、CI）以退出码 2 失败，并在 stderr 给出非交互的替代方案（子命令 / 配置凭据 / `--jg --zy --bh`），**不得**抛出 `readline` 堆栈，也不得先往 stdout 写半截提示符。
+无子命令运行（交互式菜单）、`login` 需要输入学号密码、`clsched` 不带 `--bh` 时的级联选择，以及 `freeclass` / `payment` / `minor-schedule` 的交互式表单都需要真实终端。stdin 不是终端时（管道、`</dev/null`、CI）以退出码 2 失败，并在 stderr 给出非交互的替代方案（子命令 / 配置凭据 / `--jg --zy --bh`），**不得**抛出 `readline` 堆栈，也不得先往 stdout 写半截提示符。
 
 反之，凭据或参数齐备时这些命令在非终端环境下正常工作（例如脚本里 `USTS_PASSWORD=... usts login`），不受此限制。
 

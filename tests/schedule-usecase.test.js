@@ -8,7 +8,7 @@ const { capture } = require('./capture');
 const TIMED = {
   courseName: '高等数学A(一)',
   teacher: '李涛',
-  className: '计算机2511',
+  className: '计算机2301',
   campus: '石湖',
   weeks: '1-17周',
   weekday: 1,

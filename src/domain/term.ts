@@ -1,3 +1,5 @@
+import { AppError } from './errors';
+
 export interface Term {
   academicYear: string;
   semester: string;
@@ -55,6 +57,29 @@ export function termLabel(xnm: string, xqm: string): string {
   return xqm ? `${y} 学年 · 第${xqmName(xqm)}学期` : `${y} 学年 · 全部学期`;
 }
 
+/** 合法的学期码（与网页下拉一致）。 */
+export const TERM_CODES = ['3', '12', '16'] as const;
+
+/**
+ * 校验用户给的学年/学期。
+ *
+ * 不校验的话非法值会原样进请求，服务端返回空网格，命令于是报「该学期没有数据」——
+ * 一个把参数错误伪装成空结果的假结论。这里当场报 `CONFIGURATION_ERROR`（退出码 2）。
+ */
+export function validateTerm(term: { xnm: string; xqm: string }): { xnm: string; xqm: string } {
+  if (!/^\d{4}$/.test(term.xnm)) {
+    throw new AppError('CONFIGURATION_ERROR', `学年必须是 4 位年份（如 2025），收到：${term.xnm}`);
+  }
+  // 学期留空是合法的：表示「该学年全部学期」，与网页行为一致。
+  if (term.xqm && !(TERM_CODES as readonly string[]).includes(term.xqm)) {
+    throw new AppError(
+      'CONFIGURATION_ERROR',
+      `学期取值必须是 ${TERM_CODES.join(' / ')}（或留空表示全部学期），收到：${term.xqm}`,
+    );
+  }
+  return term;
+}
+
 /**
  * 解析学年/学期参数。
  * 与网页行为一致（2026-08 抓包实测）：
@@ -64,8 +89,8 @@ export function termLabel(xnm: string, xqm: string): string {
  */
 export function resolveTerm(opts: { xnm?: string; xqm?: string }): { xnm: string; xqm: string } {
   const def = currentTerm();
-  return {
+  return validateTerm({
     xnm: opts.xnm || def.academicYear,
     xqm: opts.xqm !== undefined ? opts.xqm : (opts.xnm ? '' : def.semester),
-  };
+  });
 }

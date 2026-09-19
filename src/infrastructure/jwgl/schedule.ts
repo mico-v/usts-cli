@@ -3,7 +3,7 @@ import { ClassScheduleItem, ClassScheduleQuery, ClassScheduleView, ScheduleItem,
 import { buildClassScheduleBody, parseBjkbdyOptions } from './class-schedule-page';
 import { formBody } from './form';
 import { mapClassScheduleItem, mapScheduleItem } from './mappers';
-import { assertReadableResponse } from './response-policy';
+import { ambiguousRejection, assertReadableResponse } from './response-policy';
 import { parseJsonValue, recordArray } from './value';
 
 /** 个人课表与班级课表（bjkbdy）端点。 */
@@ -30,7 +30,12 @@ export async function querySchedule(t: AuthenticatedTransport, xnm = '', xqm = '
   );
   assertReadableResponse(resp, '课表查询');
   const data: any = parseJsonValue(resp.data, '个人课表响应');
-  return recordArray(data?.sjkList).map(mapScheduleItem);
+  // 个人课表正常返回 `{ xsxx, sjkList }`；错误提示页/拒绝包裹体没有 sjkList，
+  // 放过去会被当成「本学期没有课」，而课表为空是最容易被信以为真的错误结论。
+  if (!data || typeof data !== 'object' || !Array.isArray(data.sjkList)) {
+    throw ambiguousRejection('课表查询', data);
+  }
+  return recordArray(data.sjkList).map(mapScheduleItem);
 }
 
 /** 解析班级课表视图页里的选单选项（学院/校区/年级内嵌在 HTML 里）。 */
@@ -62,13 +67,13 @@ export async function getMajorsByCollege(t: AuthenticatedTransport, jgId: string
 /** 班级下拉：comm_cxBjdmList.html?jg_id&zyh_id&njdm_id（meta 带 bh 编号/zymc/jgmc/njmc） */
 export async function getClassesByMajor(
   t: AuthenticatedTransport,
-  jgId: string,
-  zyhId: string,
-  njdmId: string,
+  collegeId: string,
+  majorId: string,
+  gradeId: string,
 ): Promise<SelectOption[]> {
   const resp = await t.requestWithRetry(() =>
     t.http.get('/xtgl/comm_cxBjdmList.html', {
-      params: { jg_id: jgId, zyh_id: zyhId, bh_id: '', njdm_id: njdmId, '_': Date.now(), gnmkdm: 'N214505' },
+      params: { jg_id: collegeId, zyh_id: majorId, bh_id: '', njdm_id: gradeId, '_': Date.now(), gnmkdm: 'N214505' },
       headers: { Cookie: t.cookieHeader(), Referer: `${t.baseUrl}/kbdy/bjkbdy_cxBjkbdyIndex.html`, 'X-Requested-With': 'XMLHttpRequest' },
     }),
   );
@@ -95,6 +100,10 @@ export async function queryClassSchedule(
   );
   assertReadableResponse(resp, '班级课表查询');
   const data: any = parseJsonValue(resp.data, '班级课表响应');
+  // 正常返回 `{ kbList, sjkList, ... }`；不校验的话拒绝包裹体同样会变成「该班级暂无课表」。
+  if (!data || typeof data !== 'object' || !Array.isArray(data.kbList)) {
+    throw ambiguousRejection('班级课表查询', data);
+  }
   const list = recordArray(data.kbList);
   // 过滤“未排地点”占位条目
   const items = list.filter((it) => it.cdmc && it.cdmc !== '未排地点').map(mapClassScheduleItem);

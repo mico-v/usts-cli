@@ -5,7 +5,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen.svg)](package.json)
 
-`usts` 面向苏州科技大学**正方教务系统**（V9，`jwgl.usts.edu.cn/jwglxt`）的在校生账号：在终端查询成绩、考试、课表、选课名单与个人信息。
+`usts` 面向苏州科技大学**正方教务系统**（V9，`jwgl.usts.edu.cn/jwglxt`）的在校生账号：在终端查询成绩、考试、课表、空闲教室、缴费记录、选课名单与个人信息。
 
 ## 安装
 
@@ -37,6 +37,11 @@ usts                          # 不带参数进入交互式菜单
 | `usts gpa` / `usts academia` | 学业成绩概览 / 学业情况与课程分类 |
 | `usts notifications` | 通知与待办 |
 | `usts selected-courses` | 已选课程详情 |
+| `usts freeclass` | 空闲教室（可查某周次/星期/节次的空闲场地） |
+| `usts warning` | 学业预警 |
+| `usts plan` | 教学执行计划（默认本专业 + 本年级，可查课程明细） |
+| `usts payment` | 学生缴费记录（只读） |
+| `usts minor-schedule` | 微专业 / 辅修 / 二学位课表 |
 | `usts schedule-pdf` / `usts academia-pdf` | 下载课表 PDF / 成绩总表 PDF |
 
 `scores` / `exams` / `courses` / `schedule` / `clsched` 等支持 `-y`（学年）与 `-t`（学期）参数，缺省按当前日期推算。

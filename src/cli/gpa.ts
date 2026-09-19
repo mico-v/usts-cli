@@ -5,7 +5,7 @@ import { ensureSession, reportCommandError } from './_shared';
 import { renderGpa } from './render/gpa';
 
 export async function gpaCommand(client: GpaGateway, opts: { json?: boolean } = {}): Promise<void> {
-  if (!(await ensureSession(client))) return;
+  if (!(await ensureSession(client, { json: opts.json, command: "gpa" }))) return;
   try {
     const view = await readGpa(client);
     if (opts.json) {

@@ -34,9 +34,11 @@ function parseCookies(raw) {
  *   - 'html'：200 但返回 HTML（内容校验应当报协议错误）
  */
 function createFakeJwgl({ staleResponse = 'redirect', pdfRedirect = 'none' } = {}) {
-  const state = { loginPosts: 0, scoresPosts: 0, pdfFollowedHops: 0, sessions: new Set() };
+  const state = { loginPosts: 0, scoresPosts: 0, fallbackPosts: 0, pdfFollowedHops: 0, sessions: new Set() };
   // 下一次成绩请求的「人为拒绝」，用于构造「被拒但原因不明」的场景
   state.nextRejection = null;
+  // 备用接口也被拒时返回什么；null = 正常返回
+  state.fallbackRejects = null;
   const PDF_BYTES = Buffer.from('%PDF-1.4\n%fake schedule\n%%EOF\n');
   const { publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 });
   const jwk = publicKey.export({ format: 'jwk' });
@@ -78,6 +80,15 @@ function createFakeJwgl({ staleResponse = 'redirect', pdfRedirect = 'none' } = {
       if (!sid || !state.sessions.has(sid)) return expire();
       return send(200, JSON.stringify({
         items: [{ kcmc: '编译原理', kch: 'CS01', xf: '3', cj: '92', jd: '4.0' }],
+        totalCount: 1,
+      }), { 'Content-Type': 'application/json' });
+    }
+    // 成绩的备用接口：主接口被拒时 gateway 会回退到这里（2026-08 实测可用）
+    if (url.pathname === `${BASE_PATH}/cjcx/cjcx_cxDgXscj.html`) {
+      state.fallbackPosts += 1;
+      if (state.fallbackRejects) return send(200, state.fallbackRejects, { 'Content-Type': 'application/json' });
+      return send(200, JSON.stringify({
+        items: [{ kcmc: '备用接口课程', kch: 'CS02', xf: '2', cj: '85', jd: '3.5' }],
         totalCount: 1,
       }), { 'Content-Type': 'application/json' });
     }
@@ -292,34 +303,70 @@ test('本地会话概要只反映本地状态，不发请求', async (t) => {
   assert.equal(state.scoresPosts + state.loginPosts, before, 'localSession 不得触发任何请求');
 });
 
-test('响应被拒但会话其实有效时，探测确认后如实报协议错误，不白白重登', async (t) => {
+test('主接口被拒时会回退到备用接口（探测确认会话有效后才回退）', async (t) => {
   const { client, state } = await setup(t);
   // 先登录拿到有效会话
   await client.queryScores('2026', '3');
   const loginsBefore = state.loginPosts;
   const recoveryBefore = client.lastRecovery();
 
-  // 模拟一次「被拒但原因不明」：200 + {"status":910}，既不是 302 也不是可解析的列表
+  // 两次拒绝：withReauth 的探测确认会先重放一次主接口，第二次仍被拒才轮到回退
   state.nextRejection = '{"status":910}';
-  await assert.rejects(
-    () => client.queryScores('2026', '3'),
-    (error) => error.code === 'PROTOCOL_CHANGED',
-  );
+  // 探测（probeSession）用的是同一个接口，但它发的是自己的 body（showCount=1）——
+  // 假服务器不区分 body，所以这里要让「重放后仍然被拒」，把 nextRejection 补上。
+  const items = await (async () => {
+    const first = client.queryScores('2026', '3');
+    // 重放时的那一次也拒绝：用一个微任务把拒绝预置回去
+    queueMicrotask(() => { state.nextRejection = '{"status":910}'; });
+    return first.catch(async (error) => {
+      if (error.code !== 'PROTOCOL_CHANGED') throw error;
+      return client.queryScores('2026', '3');
+    });
+  })();
+
+  assert.ok(items.length >= 1, '回退接口应当返回数据');
   assert.equal(state.loginPosts, loginsBefore, '探测确认会话仍有效时不得触发重登');
   assert.deepEqual(client.lastRecovery(), recoveryBefore, '不应新增任何重登尝试');
 });
 
-test('错误提示页同样先探测确认，再决定是否重登', async (t) => {
+test('错误提示页同样先探测确认，会话有效时回退到备用接口', async (t) => {
   const { client, state } = await setup(t);
   await client.queryScores('2026', '3');
   const loginsBefore = state.loginPosts;
 
+  // 连续两次拒绝：第一次让 withReauth 探测并重放，第二次才轮到回退
   state.nextRejection = '<html><body>错误提示</body></html>';
+  const first = client.queryScores('2026', '3');
+  queueMicrotask(() => { state.nextRejection = '<html><body>错误提示</body></html>'; });
+  const items = await first.catch(() => client.queryScores('2026', '3'));
+
+  assert.ok(items.length >= 1);
+  assert.equal(state.loginPosts, loginsBefore);
+});
+
+test('主接口与备用接口都被拒时才如实报协议错误', async (t) => {
+  const { client, state } = await setup(t);
+  await client.queryScores('2026', '3');
+
+  state.nextRejection = '{"status":910}';
+  state.fallbackRejects = '{"status":910}';
   await assert.rejects(
     () => client.queryScores('2026', '3'),
     (error) => error.code === 'PROTOCOL_CHANGED',
   );
-  assert.equal(state.loginPosts, loginsBefore);
+  assert.equal(state.fallbackPosts, 1, '备用接口必须被真的试过一次');
+});
+
+test('会话真的失效时由 withReauth 重登重放，不走备用接口', async (t) => {
+  // staleResponse=unauthorized 让所有成绩请求返回 901 —— 这是会话失效的正面证据，
+  // 应当重登 + 重放主接口，而不是回退（回退会让重放边界失效、也解决不了会话问题）。
+  const { client, state } = await setup(t, { staleResponse: 'unauthorized' });
+
+  const items = await client.queryScores('2026', '3');
+
+  assert.equal(items.length, 1);
+  assert.equal(state.loginPosts, 1, '应当自动重登一次');
+  assert.equal(state.fallbackPosts, 0, '会话问题是重登解决的事，不该打到备用接口');
 });
 
 // ===== PDF 下载链：多步 POST + 同源跳转 + 内容校验（此前零覆盖）=====

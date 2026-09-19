@@ -3,7 +3,7 @@ import { AcademiaCourseItem, AcademiaSummary, GpaSummary } from '../../types/aca
 import { parseAcademiaSummary, parseGpaSummary } from './academia-page';
 import { formBody } from './form';
 import { mapAcademiaCourseItem } from './mappers';
-import { assertReadableResponse } from './response-policy';
+import { ambiguousRejection, assertReadableResponse } from './response-policy';
 import { parseJsonValue, recordArray } from './value';
 
 /**
@@ -42,5 +42,8 @@ export async function queryAcademiaCategory(
   );
   assertReadableResponse(resp, '学业分类查询');
   const data = parseJsonValue(resp.data, '学业分类响应');
+  // 该接口直接返回课程数组（非网格包裹体）。`{status:910}` 之类的拒绝包裹体放过去会变成
+  // 「该分类暂无课程明细」——而分类为空本来就有一条与之完全相同的正常解释，最容易被误信。
+  if (!Array.isArray(data)) throw ambiguousRejection('学业分类查询', data);
   return recordArray(data).map(mapAcademiaCourseItem);
 }

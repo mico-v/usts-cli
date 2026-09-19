@@ -13,9 +13,11 @@ import { success, error, info, warning } from './logger';
 import { AppError, exitCodeForError } from '../domain/errors';
 import { credentialsFromEnv } from '../config/env';
 import { assertInteractiveTerminal } from './_shared';
+import { redactSecret } from '../shared/sanitize';
 
 export async function loginCommand(client: AuthGateway & ProfileGateway): Promise<boolean> {
   // 1. 复用已持久化的会话
+  let reused = false;
   if (client.restoreSession()) {
     const state = await client.ensureValidSession();
     if (state === 'valid') {
@@ -26,12 +28,17 @@ export async function loginCommand(client: AuthGateway & ProfileGateway): Promis
       console.error(warning('无法确认会话是否有效（网络异常），将继续尝试使用该会话'));
       return true;
     }
-    console.log(info('上次会话已失效，重新登录...'));
+    // 走到这里说明本地会话已失效，且 ensureValidSession 已经用配置里的凭据自动重登过一次
+    // （没有凭据时它连登录都不会发起）。所以第 3 步**不能再登一次**：用同一组错误凭据连发
+    // 两次登录请求会把这个账号更快推进 yzcskz=3 的验证码锁定，而那正是「自动重登不重试」
+    // 这条设计约束要避免的事。只在存活的会话里复用结果，不重复提交凭据。
+    reused = client.localSession().loggedIn;
+    console.log(info(reused ? '已用配置中的账号密码重新登录' : '上次会话已失效，重新登录...'));
   }
 
-  // 2. 直接注入浏览器复制的会话 Cookie
+  // 2. 直接注入浏览器复制的会话 Cookie（仅在还没有可用会话时尝试）
   const cookies = process.env.USTS_COOKIES;
-  if (cookies && cookies.trim()) {
+  if (!reused && cookies && cookies.trim()) {
     client.setCookies(cookies.trim());
     console.log(info('已载入会话 Cookie，正在校验...'));
     // 关键：校验这份 Cookie 时**绝不能触发自动重登**。
@@ -43,6 +50,9 @@ export async function loginCommand(client: AuthGateway & ProfileGateway): Promis
     const probe = await client.probeSession();
     if (probe === 'unknown') {
       console.error(warning('无法校验提供的 Cookie（网络异常）。请稍后重试，或去掉 USTS_COOKIES 直接用账号密码登录'));
+      // 判不出来 ≠ 成功。不能报「已登录」（那会把没验证过的凭据说成可用），
+      // 也不该报凭据错误（网络问题不是用户的错）——按远端不可用给退出码 4。
+      process.exitCode = exitCodeForError(new AppError('NETWORK_UNAVAILABLE', '无法校验 Cookie'));
       return false;
     }
     if (probe === 'valid') {
@@ -62,13 +72,17 @@ export async function loginCommand(client: AuthGateway & ProfileGateway): Promis
     console.error(warning('提供的 Cookie 已失效'));
     if (!credentialsFromEnv()) {
       console.error(error('请重新从浏览器复制 Cookie，或在配置文件中配置 USTS_USERNAME/USTS_PASSWORD'));
+      // 凭据问题 → 退出码 3（docs/contracts/cli.md 的表格），与其他命令的会话失败一致。
+      // 不设码会落到 1，而文档里没有 1，脚本无法判定。
+      process.exitCode = exitCodeForError(new AppError('AUTHENTICATION_REQUIRED', '提供的 Cookie 已失效'));
       return false;
     }
     console.log(info('改用配置中的账号密码登录...'));
     client.clearCookies();
   }
 
-  // 3 & 4. 账号密码登录
+  // 3 & 4. 账号密码登录（仅在前面两条路径都没拿到可用会话时）
+  if (reused) return true;
   const credentials = credentialsFromEnv();
   let username = credentials?.username;
   let password = credentials?.password;
@@ -107,7 +121,8 @@ export async function loginCommand(client: AuthGateway & ProfileGateway): Promis
   }
   // 错误走 stderr（见 docs/contracts/cli.md 的输出通道约定），
   // 否则 `usts login > log` 会把失败原因一起吞掉。
-  console.error(error(result.message));
+  // 登录失败消息里可能带服务端回显的 URL/参数，输出前统一脱敏。
+  console.error(error(redactSecret(result.message)));
   process.exitCode = exitCodeForError(new AppError(result.errorCode || 'UNKNOWN_ERROR', result.message));
   return false;
 }

@@ -47,15 +47,18 @@ export function printTable(headers: string[], rows: (string | undefined)[][], op
   const cols = headers.length;
   const widths: number[] = new Array(cols).fill(0);
   const norm = (s: string | undefined) => sanitizeTerminalText(s === undefined || s === null ? '' : String(s));
+  // 表头同样要净化：学业预警的列标题直接来自远端 HTML 的 `<th>`，
+  // 只净化数据行会让表头成为唯一的注入通道。
+  const normHeaders = headers.map(norm);
   const normRows = rows.map((r) => headers.map((_, i) => truncateWidth(norm(r[i]), maxColWidth)));
-  headers.forEach((h, i) => (widths[i] = Math.max(widths[i], displayWidth(truncateWidth(h, maxColWidth)))));
+  normHeaders.forEach((h, i) => (widths[i] = Math.max(widths[i], displayWidth(truncateWidth(h, maxColWidth)))));
   normRows.forEach((r) => r.forEach((c, i) => (widths[i] = Math.max(widths[i], displayWidth(c)))));
 
   const sep = '+' + widths.map((w) => '-'.repeat(w + 2)).join('+') + '+';
   const fmt = (cells: string[]) => '|' + cells.map((c, i) => ' ' + padEndWidth(c, widths[i]) + ' ').join('|') + '|';
 
   console.log(sep);
-  console.log(fmt(headers.map((h) => truncateWidth(h, maxColWidth))));
+  console.log(fmt(normHeaders.map((h) => truncateWidth(h, maxColWidth))));
   console.log(sep);
   for (const r of normRows) console.log(fmt(r));
   if (normRows.length) console.log(sep);

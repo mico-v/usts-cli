@@ -20,10 +20,26 @@ export function assertInteractiveTerminal(what: string, alternative: string): vo
 }
 
 /**
+ * 数值型选项的解析（commander 的 option 回调）。
+ * 非法值当场报参数错误，而不是把 `NaN` 一路带进请求参数——那样失败会伪装成「没有数据」。
+ */
+export function numericOption(value: string, label: string, minimum = 0): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum) {
+    throw new AppError('CONFIGURATION_ERROR', `${label}必须是不小于 ${minimum} 的整数：${value}`);
+  }
+  return parsed;
+}
+
+/**
  * 会话不可用时给用户看的文案；可用（`valid`/`unknown`）时返回 `null`。
  * 命令入口与交互式预检共用同一处文案，避免两边漂移。
+ *
+ * 结论一律映射到 `AUTHENTICATION_REQUIRED`（退出码 3，见 `docs/contracts/cli.md`）：
+ * `missing` 是「本地根本没有会话」，其余是会话失效——两类都是「需要先登录」的凭据问题。
+ * 远端错误（网络、限流）不在这里判：它们由业务响应按 `AppError` 的稳定错误码上报。
  */
-export function sessionProblemMessage(client: SessionGateway, state: SessionLookup): string | null {
+export function sessionProblem(client: SessionGateway, state: SessionLookup): string | null {
   if (state === 'valid' || state === 'unknown') return null;
   if (state === 'missing') return '未找到会话，请先运行 usts login 登录';
 
@@ -46,13 +62,19 @@ export function sessionProblemMessage(client: SessionGateway, state: SessionLook
  * 与旧实现的区别：不再「本地有 Cookie 就直接开跑」。校验收敛到 `ensureValidSession()`，
  * 由它按信任窗口决定是否发一次探针请求，并在确认失效时自动重新登录。
  * 这里只负责把结论翻译成给用户看的话和退出码。
+ *
+ * `json` 必须传：会话失败是最需要机器判定的场景（脚本要先看「登录了没」再决定往下走），
+ * 只写一行中文的话管道消费方拿不到任何可判定的东西。文案本身由 `reportCommandError`
+ * 统一脱敏（消息里可能带 token）。
  */
-export async function ensureSession(client: SessionGateway): Promise<boolean> {
-  const problem = sessionProblemMessage(client, await client.ensureValidSession());
+export async function ensureSession(
+  client: SessionGateway,
+  options: { json?: boolean; command?: string } = {},
+): Promise<boolean> {
+  const problem = sessionProblem(client, await client.ensureValidSession());
   if (!problem) return true;
 
-  console.error(error(problem));
-  process.exitCode = 3;
+  reportCommandError(new AppError('AUTHENTICATION_REQUIRED', problem), '会话不可用', options);
   return false;
 }
 

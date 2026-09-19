@@ -54,40 +54,43 @@ export interface ClassSelection {
   gradeName: string;
 }
 
-/** 班级选择 → 查询参数（两条解析路径共用，避免 `bh`/`njmc` 这类易错字段各写一遍）。 */
+/** 班级选择 → 查询参数（两条解析路径共用，避免编号/年级名这类易错字段各写一遍）。 */
 export function toClassQuery(selection: ClassSelection): ClassScheduleQuery {
   return {
     xnm: selection.xnm,
     xqm: selection.xqm,
-    xqhId: selection.campusId,
-    njdmId: selection.gradeId,
-    zyhId: selection.major.value,
-    bhId: selection.cls.value,
-    bh: String(selection.cls.meta?.bh || ''),
-    bj: selection.cls.label,
-    zymc: selection.major.label,
-    jgmc: selection.college.label,
-    njmc: selection.gradeName,
+    campusId: selection.campusId,
+    gradeId: selection.gradeId,
+    majorId: selection.major.value,
+    classId: selection.cls.value,
+    // 班级编号来自下拉的 meta（远端的 `bh` 字段），它必须与 classId 对应，缺了服务端返回空列表。
+    classNumber: String(selection.cls.meta?.bh || ''),
+    className: selection.cls.label,
+    majorName: selection.major.label,
+    collegeName: selection.college.label,
+    gradeName: selection.gradeName,
   };
 }
 
-/** 按 `--jg/--zy/--bh` 解析班级。缺参数或匹配不到时抛 `AppError`（命令层统一上报）。 */
+/**
+ * 按「学院 + 专业（+ 班级）」解析出一次班级查询。
+ *
+ * 学院/专业在这个签名里是**必填**的：CLI 上缺哪个开关、该怎么提示属于命令层的事
+ * （`cli/clsched.ts` 负责把开关名和交互式替代方案说清楚），用例只拿到已经齐备的取值。
+ * 这样「菜单里没有 --jg 这种提示」的措辞问题不会渗进应用层。
+ */
 export async function resolveClassQueryByFlags(
   client: ClassScheduleGateway,
   options: ClassScheduleOptions,
-  flags: { xqh?: string; nj?: string; jg?: string; zy?: string; bh?: string },
+  flags: { college: string; major: string; xqh?: string; nj?: string; bh?: string },
   term: { xnm: string; xqm: string },
 ): Promise<ClassScheduleQuery> {
-  if (!flags.jg) {
-    throw new AppError('CONFIGURATION_ERROR', '请用 --jg 指定学院，或去掉 --bh 走交互式选择');
-  }
-  const college = requireOption('学院', flags.jg, options.colleges);
+  const college = requireOption('学院', flags.college, options.colleges);
   const campus = flags.xqh ? requireOption('校区', flags.xqh, options.campuses) : null;
   const gradeId = flags.nj || options.defaultGrade || '';
-  if (!flags.zy) throw new AppError('CONFIGURATION_ERROR', '请用 --zy 指定专业');
 
   const majors = await client.getMajorsByCollege(college.value);
-  const major = requireOption('专业', flags.zy, majors, ['zyh']);
+  const major = requireOption('专业', flags.major, majors, ['zyh']);
   const classes = await client.getClassesByMajor(college.value, major.value, gradeId);
   const cls = requireOption('班级', flags.bh || '', classes, ['bh']);
 

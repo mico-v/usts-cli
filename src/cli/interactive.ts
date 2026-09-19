@@ -13,7 +13,8 @@ import { createClient } from './create-client';
 import { header, info, success, error } from './logger';
 import { formatDuration } from './format';
 import { SessionLookup } from '../domain/session';
-import { sessionProblemMessage, assertInteractiveTerminal } from './_shared';
+import { sessionProblem, assertInteractiveTerminal } from './_shared';
+import { redactSecret } from '../shared/sanitize';
 import { LOGIN_SPEC, LOGOUT_SPEC, PROFILE_SPEC, QUERY_SPECS, QuerySpec } from './registry';
 import { termDefaults } from './prompts';
 
@@ -65,9 +66,9 @@ function prefetchSession(client: JwglGateway): Promise<SessionLookup> {
  * 「未登录」告诉用户，而不是等到最后一个命令执行时才报错。
  */
 async function sessionReady(client: JwglGateway, pending: Promise<SessionLookup>): Promise<boolean> {
-  const problem = sessionProblemMessage(client, await pending);
+  const problem = sessionProblem(client, await pending);
   if (!problem) return true;
-  console.error(error(problem));
+  console.error(error(redactSecret(problem)));
   return false;
 }
 
@@ -115,7 +116,8 @@ export async function interactiveShell(baseUrl: string): Promise<void> {
     try {
       action = await mainMenu(client);
     } catch {
-      // 用户按 Ctrl+C 中断选择
+      // 提示意外结束（例如 stdin 被关闭）时退出菜单，而不是把堆栈甩给用户。
+      // 注意 Ctrl+C **不走这里**：inquirer 8 在 SIGINT 上是 process.kill 直接结束进程。
       console.log();
       break;
     }
@@ -152,9 +154,11 @@ export async function interactiveShell(baseUrl: string): Promise<void> {
       if (!(await sessionReady(client, pending))) continue;
       try {
         await runQuery(spec, client);
-      } catch (e: any) {
-        if (e?.message?.includes('interrupted')) break;
-        console.error(error(e?.message || '查询中断'));
+      } catch (e: unknown) {
+        // 命令层已经把失败翻成给用户看的话与退出码（reportCommandError），这里只兜住
+        // 真正逃出来的意外。不按 'interrupted' 之类的中文文本分流：inquirer 8 的 Ctrl+C
+        // 是 process.kill(SIGINT) 直接结束进程，根本不会 reject 到这里。
+        console.error(error(e instanceof Error ? e.message : '查询中断'));
       }
       continue;
     }

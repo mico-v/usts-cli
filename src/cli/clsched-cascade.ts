@@ -7,10 +7,20 @@
  */
 import inquirer from 'inquirer';
 import { ClassScheduleGateway } from '../application/ports/jwgl-gateway';
-import { ClassScheduleQuery, ClassScheduleView } from '../types/schedule';
+import { ClassScheduleQuery, ClassScheduleView, SelectOption } from '../types/schedule';
 import { AppError } from '../domain/errors';
 import { gradeLabel, pickOption, toClassQuery } from '../application/usecases/class-schedule';
+import { sanitizeTerminalText } from '../shared/sanitize';
 import { XQM_CHOICES } from './prompts';
+
+/**
+ * 下拉选项。学院/专业/班级名称来自远端页面，而 inquirer 会把它们直接画到终端上——
+ * 这是与 `render/*` 并列的**另一条输出通道**，同样要过净化。`value` 不净化：
+ * 它是发回服务端的 id，改了会让查询对不上。
+ */
+function selectChoices(list: SelectOption[]): { name: string; value: string }[] {
+  return list.map((option) => ({ name: sanitizeTerminalText(option.label), value: option.value }));
+}
 
 /** 班级课表的学年下拉以「解析出的学年」为中心（前后各若干年），与查询表单不同。 */
 function yearChoices(defXnm: string): { name: string; value: string }[] {
@@ -30,15 +40,15 @@ export async function interactiveCascade(
     { type: 'list', name: 'xqm', message: '选择学期', choices: XQM_CHOICES, default: term.xqm },
     {
       type: 'list', name: 'campus', message: '选择校区',
-      choices: options.campuses.map((o) => ({ name: o.label, value: o.value })),
+      choices: selectChoices(options.campuses),
       default: options.defaultCampus || options.campuses[0]?.value,
     },
     {
       type: 'list', name: 'grade', message: '选择年级',
-      choices: options.grades.map((o) => ({ name: o.label, value: o.value })),
+      choices: selectChoices(options.grades),
       default: options.defaultGrade || options.grades[0]?.value,
     },
-    { type: 'list', name: 'college', message: '选择学院', choices: options.colleges.map((o) => ({ name: o.label, value: o.value })) },
+    { type: 'list', name: 'college', message: '选择学院', choices: selectChoices(options.colleges) },
   ]);
 
   const college = pickOption(picked.college, options.colleges);
@@ -47,7 +57,7 @@ export async function interactiveCascade(
   const majors = await client.getMajorsByCollege(picked.college);
   if (!majors.length) throw new AppError('REMOTE_SERVER_ERROR', '该学院暂无专业');
   const chosenMajor = await inquirer.prompt([
-    { type: 'list', name: 'v', message: '选择专业', choices: majors.map((o) => ({ name: o.label, value: o.value })) },
+    { type: 'list', name: 'v', message: '选择专业', choices: selectChoices(majors) },
   ]);
   const major = pickOption(chosenMajor.v, majors);
   if (!major) throw new AppError('CONFIGURATION_ERROR', `未找到专业：${chosenMajor.v}`);
@@ -55,7 +65,7 @@ export async function interactiveCascade(
   const classes = await client.getClassesByMajor(picked.college, major.value, picked.grade);
   if (!classes.length) throw new AppError('REMOTE_SERVER_ERROR', '该专业该年级暂无班级');
   const chosenClass = await inquirer.prompt([
-    { type: 'list', name: 'v', message: '选择班级', choices: classes.map((o) => ({ name: o.label, value: o.value })) },
+    { type: 'list', name: 'v', message: '选择班级', choices: selectChoices(classes) },
   ]);
   const cls = pickOption(chosenClass.v, classes);
   if (!cls) throw new AppError('CONFIGURATION_ERROR', `未找到班级：${chosenClass.v}`);

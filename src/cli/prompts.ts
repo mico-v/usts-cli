@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import inquirer from 'inquirer';
 import { currentTerm, Term } from '../domain/term';
+import { numericOption } from './_shared';
 
 /** 学年下拉项：当前学年往前 5 年，显示 2025-2026 区间格式 */
 export function yearChoices(): { name: string; value: string }[] {
@@ -73,4 +74,56 @@ export async function askOutputPath(what: string, defaultName: string): Promise<
     { type: 'confirm', name: 'overwrite', message: `${output} 已存在，覆盖吗？`, default: false },
   ]);
   return overwrite ? { output, force: true } : null;
+}
+
+/** 微专业/辅修课表类型（与用例的语义名一致） */
+export const MINOR_KIND_CHOICES = [
+  { name: '微专业', value: '微专业' },
+  { name: '二学位', value: '二学位' },
+  { name: '辅修', value: '辅修' },
+];
+
+/** 纯文本选项：留空即「不限」，因此空串要归一成 `undefined`，不能当成筛选条件。 */
+function optional(value: string): string | undefined {
+  return value.trim() || undefined;
+}
+
+export interface FreeClassForm {
+  xnm: string;
+  xqm: string;
+  week?: string;
+  weekday?: string;
+  section?: string;
+  name?: string;
+  minSeats?: number;
+}
+
+/** 复刻网页「空闲场地查询」表单：学期 + 可选时段 + 名称/座位筛选。 */
+export async function askFreeClassForm(defXnm: string, defXqm: string): Promise<FreeClassForm> {
+  const term = await askTerm(defXnm, defXqm);
+  const rest = await inquirer.prompt([
+    { type: 'input', name: 'week', message: '周次（留空=不限；填了就要和星期、节次一起填）', default: '' },
+    { type: 'input', name: 'weekday', message: '星期（1=周一，如 1,3,5；与周次、节次一起用）', default: '' },
+    { type: 'input', name: 'section', message: '节次（如 5-6；与周次、星期一起用）', default: '' },
+    { type: 'input', name: 'name', message: '场地名称/编号包含（留空=不限）', default: '' },
+    { type: 'input', name: 'minSeats', message: '最少座位数（留空=不限）', default: '' },
+  ]);
+  const minSeats = rest.minSeats.trim();
+  return {
+    ...term,
+    week: optional(rest.week),
+    weekday: optional(rest.weekday),
+    section: optional(rest.section),
+    name: optional(rest.name),
+    minSeats: minSeats ? numericOption(minSeats, '最少座位数', 1) : undefined,
+  };
+}
+
+/** 复刻网页「微专业课表打印」表单：学期 + 课表类型。 */
+export async function askMinorScheduleForm(defXnm: string, defXqm: string): Promise<{ xnm: string; xqm: string; kind: string }> {
+  const term = await askTerm(defXnm, defXqm);
+  const { kind } = await inquirer.prompt([
+    { type: 'list', name: 'kind', message: '课表类型', choices: MINOR_KIND_CHOICES },
+  ]);
+  return { ...term, kind: kind as string };
 }

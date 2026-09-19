@@ -12,7 +12,8 @@ test('命令注册表：id 唯一、顺序稳定、帮助文本齐备', () => {
   // 顺序即 `usts --help` 的命令表顺序：写成断言是为了让调整顺序变成一个显式决定。
   assert.deepEqual(ids, [
     'login', 'logout', 'scores', 'exams', 'courses', 'schedule', 'clsched', 'profile',
-    'gpa', 'notifications', 'academia', 'selected-courses', 'schedule-pdf', 'academia-pdf',
+    'gpa', 'notifications', 'academia', 'selected-courses',
+    'freeclass', 'warning', 'plan', 'payment', 'minor-schedule', 'schedule-pdf', 'academia-pdf',
   ]);
 
   for (const spec of ALL_SPECS) {

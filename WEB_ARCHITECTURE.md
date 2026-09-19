@@ -107,6 +107,11 @@
 | `usts notifications [--json]` | `client.queryNotifications()` | 首页通知/待办；字段按 USTS 返回做防御性映射 |
 | `usts academia [--json] [--category 名称]` | `client.queryAcademia()` / `queryAcademiaCategory()` | 学业情况：主页面分类概览 + `--category` 拉取某分类课程明细 |
 | `usts selected-courses [--xnm] [--xqm] [--json]` | `client.querySelectedCourses()` | 已选课程详情候选接口 N253512，只读 |
+| `usts freeclass [--week/--weekday/--section] [...]` | `client.queryFreeClassrooms()` | 空闲教室（N2155）：不带时段是该学期全部场地，带齐三个时段参数才是「该时段空闲」 |
+| `usts warning [--json]` | `client.queryWarning()` | 学业预警（N305516）：视图页直接渲染结论，无数据 Action |
+| `usts plan [--course] [--all] [...]` | `client.getPlanOptions()` / `queryPlan()` / `queryPlanCourses()` | 教学执行计划（N153540）：默认用视图页预选的「本学院/本年级/本专业」，`--course` 拉课程明细 |
+| `usts payment [-y] [-t] [--json]` | `client.queryPayments()` | 学生缴费（N0185）：**只读**，写接口一律不实现 |
+| `usts minor-schedule [--kind] [...]` | `client.getMinorScheduleOptions()` / `queryMinorSchedules()` | 微专业/辅修/二学位课表（N214556）：列表字段未在有数据账号上实测，见 §7.7 |
 
 - PDF 命令已实现只读请求链：`usts schedule-pdf` 使用 `bjkbdy_cxXnxqsfkz.html` → `xskbcx_cxXsShcPdf.html`；`usts academia-pdf` 使用成绩总表打印模块的多步生成接口。代码会校验登录页、HTTP 状态和 `%PDF-` 文件头。由于 PDF 含个人信息，live 下载需要用户明确指定安全输出路径；当前仅完成代码/build 验证，未在本轮落盘真实 PDF。
 - `usts notifications` 已在有效会话下实测：POST `/xtgl/index_cxDbsy.html?doType=query`，请求体使用 `sfyy`、`flag`、`queryModel.showCount/currentPage/sortName/sortOrder` 等字段；当前返回通知数组，本次测试返回 6 条。标题使用 `xxbt`，正文使用 `xxnr`，创建时间使用 `cjsj`。
@@ -165,3 +170,43 @@
   - `kbList` 排课条目：`kcmc`(课程) `xm`(**教师，注意不是 jsxm**) `zcmc`(职称) `xqj`(星期) `xqjmc` `jcor`(节次，形如 "7-9") `cdmc`(教室) `cdlbmc`(场地类别) `zcd`(周次) `xf`(学分) `kcxzjc`(必修/选修) `jxbzc`(教学班组成) `jgh_id`(教师工号)。占位条目 `cdmc='未排地点'` 需过滤。
   - `sjkList` 实践课：`qtkcgs`/`sjkcgs` 文本摘要。
 - CLI 命令 `usts clsched`：交互式级联（校区→年级→学院→专业→班级），或 `--jg/--zy/--bh`（id 或名称均可，名称按子串匹配）直接查询任意班级。
+
+### 7.7 主界面导航补全（freeclass / warning / plan / payment / minor-schedule，2026-09 实测）
+
+以 `GET /xtgl/index_initMenu.html` 的 `clickMenu(gnmkdm, dyym, …)` 全量导航为基准逐个探测，
+新增确认的功能码：
+
+| 功能 | gnmkdm | 视图页 | 数据 Action |
+|------|--------|--------|-------------|
+| 空闲教室 | `N2155` | `GET /cdjy/cdjy_cxKxcdlb.html` | `POST /cdjy/cdjy_cxKxcdlb.html?doType=query` |
+| 学业预警 | `N305516` | `GET /xyyjjk/xyyjclcx_cxXyyjclcxxsIndex.html` | 无（视图页直接渲染结论） |
+| 教学执行计划 | `N153540` | `GET /jxzxjhgl/jxzxjhck_cxJxzxjhckIndex.html` | `POST …/jxzxjhck_cxJxzxjhckIndex.html` |
+| 执行计划课程明细 | `N153540` | — | `POST …/jxzxjhkcxx_cxJxzxjhkcxxIndex.html`（body 需 `jxzxjhxx_id`） |
+| 缴费 | `N0185` | `GET /paycenter/paycenter_cxGrjfIndex.html` | `POST /paycenter/paycenter_cxGrjfIndex.html?doType=query` |
+| 微专业/辅修课表 | `N214556` | `GET /kbdy2/fxzykbdy_cxFxzyKbdyIndex.html?kklxdm=02` | `POST /kbdy2/fxzykbdy_cxFxzyKbdyTjkbList.html` |
+
+- **视图页 GET 必须带 `?gnmkdm=<功能码>`**：不带时同一路径返回 `HTTP 901` + 空 body；带上即 200 + 完整 HTML。
+- **空闲教室（N2155）的三个反直觉点**（都用实测数字确认过）：
+  1. `jyfs` **必填**（`0`=按周次）。只发 `xnm`/`xqm` 会拿到「错误提示」页——是请求被拒，不是会话失效。
+  2. 时段是**交集**语义：`zcd=4`（第 3 周）∧ `zcd=8`（第 4 周）的结果恰好等于 `zcd=12`（两周边都空）
+     的 765 间；`xqj='1'`=770 间而 `xqj='1,2'`=684 间（多选一天反而更少），确认是「每个选中时段都空闲」。
+  3. **部分掩码会被静默忽略**：只发 `zcd`（或只发 `xqj`+`jcd`）时服务端返回全部 946 间场地，
+     等同于不过滤。因此 CLI 要求 `--week/--weekday/--section` 三者同时给，少给一项直接报参数错误，
+     而不是把「全校场地列表」当成「第 3 周空闲」返回。
+  4. 位掩码取自 `js/comp/jwglxt/pkgl/cdjy/kxcdlb.js`：周次/节次是 `Σ 2^(n-1)`，星期是逗号串；
+     相邻节次结果相同（服务端按两节一大节判定空闲）。
+- **教学执行计划（N153540）**：视图页表单的 name 是 `nj_cx`/`zyh_id_cx`，数据 Action 用 `njdm_id`/`zyh_id`；
+  视图页内嵌了学院/年级/专业三个下拉且**按当前学生预选**（专业选项带 `selected`），
+  「默认查本专业+本年级」直接取它。不带过滤会返回全校 1882 条（单页约 1.4MB）。
+  课程明细只有在带 `jxzxjhxx_id` 时才有结果（实测 2025 级计算机专业计划 → 99 门课）。
+- **学业预警（N305516）**：正文在 `div.row.clearfix` 内，无预警时是 `<h4>当前学年学期暂无预警！</h4>`，
+  有预警时是明细表。CLI 的「有没有预警」按**结构**判定（表里有没有数据行），不做中文关键字匹配。
+  ⚠️ **未实测**：有预警账号的表格列语义（本轮账号无预警），因此输出原样保留表头与单元格。
+- **缴费（N0185）**：`colModel` 字段 `zfywsj_ids`/`xnmc`/`xqmc`/`ywmc`/`order_name`/`order_amount`/
+  `order_count`/`jfkssj`/`jfjssj`/`sfqr`/`pay_time`/`order_id`；本轮账号本学期无记录（合法空网格）。
+  同页还有退费 tab（`paycenter_cxGrtfIndex.html`）与「释放缴费中订单」等写入按钮，CLI 只做查询。
+- **微专业/辅修课表（N214556）**：`kklxdm` 02=微专业（主界面「微专业课表打印」的入口）、03=二学位、
+  04=辅修（取自网页显示字段配置的 `kbzl=ezy/exw/fx`）。列表 `colModel` 只有
+  学院 `jgmc`/年级 `njmc`/专业 `zymc`/课表名称 `tjkbmc` 四列，**列出的是一张张课表而不是课表内容**；
+  本轮账号无微专业数据（合法空 `{items,totalCount}`），因此这四个字段尚未在有数据账号上校验。
+  ⚠️ **未实现**：`批量输出EXCEL`（`fxzykbdy_cxDcExcelFxzykb.html`）与课表预览（`fxzykbdy_ylFxzykbdyIndex.html`）。

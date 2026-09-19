@@ -24,21 +24,35 @@ export interface ScheduleItem {
 export interface SelectOption {
   value: string; // id
   label: string; // 显示名
-  meta?: RawFields; // 原始字段（班级条目含 bh 编号 / zymc / jgmc / njmc 等）
+  meta?: RawFields; // 原始字段（班级条目含 bh 编号 / zymc / jgmc / njmc 等；仅适配器与用例按需读取）
+}
+
+/**
+ * 级联选单（学院/年级/专业）的通用形状。
+ *
+ * 班级课表、教学执行计划、微专业/辅修课表的视图页都把下拉选项内嵌在 HTML 里，
+ * 且正方通常已按当前学生预选好学院/年级/专业——「默认查自己」这条规则靠 `defaults` 落地。
+ */
+export interface CascadeOptions {
+  colleges: SelectOption[];
+  grades: SelectOption[];
+  majors: SelectOption[];
+  /** 视图页上预选的值；视图页没给（未预选）时为空串。 */
+  defaults: { collegeId: string; gradeId: string; majorId: string };
 }
 
 export interface ClassScheduleQuery {
   xnm: string;
   xqm: string;
-  xqhId: string;  // 校区 id，如 '2'=石湖
-  njdmId: string; // 年级 id，如 '2025'
-  zyhId: string;  // 专业 id，如 '0107'
-  bhId: string;   // 班级 id
-  bh: string;     // 班级编号（bjkbdy_cxBjKb.html 必需，且须与 bhId 对应，缺了返回空）
-  bj: string;     // 班级名，如 '测试班级'
-  zymc: string;   // 专业名
-  jgmc: string;   // 学院名
-  njmc: string;   // 年级名
+  campusId: string;  // 校区 id，如 '2'=石湖
+  gradeId: string; // 年级 id，如 '2025'
+  majorId: string;  // 专业 id，如 '0107'
+  classId: string;   // 班级 id
+  classNumber: string;     // 班级编号（bjkbdy_cxBjKb.html 必需，且须与 classId 对应，缺了返回空）
+  className: string;     // 班级名，如 '测试班级'
+  majorName: string;   // 专业名
+  collegeName: string;   // 学院名
+  gradeName: string;   // 年级名
 }
 
 export interface ClassScheduleItem {

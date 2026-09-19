@@ -4,8 +4,8 @@ import { ensureSession, reportCommandError } from './_shared';
 import { renderExams } from './render/exams';
 
 export async function examsCommand(client: ExamsGateway, opts: { xnm?: string; xqm?: string }): Promise<void> {
-  if (!(await ensureSession(client))) return;
   const term = resolveTerm(opts);
+  if (!(await ensureSession(client))) return;
   try {
     renderExams(await client.queryExams(term.xnm, term.xqm), term);
   } catch (e) {

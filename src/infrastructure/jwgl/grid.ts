@@ -57,16 +57,31 @@ export async function postGrid(
       // 非 JSON 通常是「错误提示」页：可能是会话失效，也可能是参数被拒——不猜。
       throw ambiguousRejection('列表查询', cause);
     }
-    // 契约要求 { items, totalCount }；`{"status":910}` 这类拒绝包裹体既没有 items
-    // 也没有 totalCount，若不拦下来会被当成「空结果」，把失败伪装成「没有数据」。
-    if (!data || typeof data !== 'object' || (!('items' in data) && !('totalCount' in data))) {
-      throw ambiguousRejection('列表查询', data);
-    }
+    assertGridEnvelope(data, '列表查询');
     const items = recordArray(data.items);
     all.push(...items);
     const total = Number(data?.totalCount) || 0;
-    if (items.length === 0 || items.length < GRID_PAGE_SIZE) break;
+    // 先看「服务端说一共有多少」再看「这一页给了多少」：反过来写会让「服务端只回了
+    // 一页不足 5000 条、但自称还有更多」的情况被当成请求完毕，静默返回截断的列表。
     if (total > 0 && all.length >= total) break;
+    if (items.length === 0 || items.length < GRID_PAGE_SIZE) break;
   }
   return all;
+}
+
+/**
+ * 列表接口的包裹体契约：`{ items, totalCount }` **两者都要在**。
+ *
+ * `{"status":910}` 这类拒绝包裹体既没有 items 也没有 totalCount，若不拦下来会被
+ * `recordArray(undefined)` 变成空数组，把「请求被拒」伪装成「没有数据」——比直接失败更糟，
+ * 因为用户会拿着一个肯定的空结论去做决定。
+ *
+ * 同样的判定必须用在**非** `postGrid` 的适配器上（课表、已选课程、通知、个人信息、
+ * 学业情况、分类明细都曾漏掉这道守卫）。这里导出成公共函数就是为了让它们共用一份规则。
+ */
+export function assertGridEnvelope(data: unknown, operation: string): void {
+  const ok = !!data && typeof data === 'object'
+    && 'items' in (data as Record<string, unknown>)
+    && 'totalCount' in (data as Record<string, unknown>);
+  if (!ok) throw ambiguousRejection(operation, data);
 }

@@ -21,4 +21,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm pack --dry-run
+      # 打包内容单独校验：tsc 从不删除输出，残留的旧模块产物会被 files:["dist"] 一起发布
+      - name: 校验发布产物
+        run: |
+          npm pack --dry-run
+          if npm pack --dry-run 2>&1 | grep -qE "dist/(commands|lib)/"; then
+            echo "::error::发布包里含已删除模块的陈旧产物，请检查 tools/prune-dist.mjs"
+            exit 1
+          fi

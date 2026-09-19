@@ -21,7 +21,7 @@ export function defaultSchedulePdfName(xnm: string, xqm: string): string {
 
 function requireWritable(store: DocumentStore, destination: string, force?: boolean): void {
   if (!force && store.exists(destination)) {
-    throw new AppError('FILE_SYSTEM_ERROR', `目标文件已存在：${destination}（使用 --force 覆盖）`);
+    throw new AppError('FILE_SYSTEM_ERROR', `目标文件已存在：${destination}（默认不覆盖已有文件）`);
   }
 }
 

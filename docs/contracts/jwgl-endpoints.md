@@ -66,6 +66,28 @@
 | queryNotifications | POST `/xtgl/index_cxDbsy.html` | 是 | read | array/grid |
 | queryAcademia | GET `/xsxy/xsxyqk_cxXsxyqkIndex.html` | 是 | read | HTML |
 | querySelectedCourses | POST `/xsxk/zzxkyzb_cxZzxkYzbChoosedDisplay.html` | 是 | read | array/grid |
+| queryFreeClassrooms | POST `/cdjy/cdjy_cxKxcdlb.html` | 是 | read | grid items（时段为空 = 该学期全部场地） |
+| queryWarning | GET `/xyyjjk/xyyjclcx_cxXyyjclcxxsIndex.html` | 是 | read | HTML（结论文本或预警明细表，无数据 Action） |
+| getPlanOptions | GET `/jxzxjhgl/jxzxjhck_cxJxzxjhckIndex.html` | 是 | read | HTML（学院/年级/专业选单 + 预选值） |
+| queryPlan | POST `/jxzxjhgl/jxzxjhck_cxJxzxjhckIndex.html` | 是 | read | grid items |
+| queryPlanCourses | POST `/jxzxjhgl/jxzxjhkcxx_cxJxzxjhkcxxIndex.html` | 是 | read | grid items |
+| queryPayments | POST `/paycenter/paycenter_cxGrjfIndex.html` | 是 | read | grid items |
+| getMinorScheduleOptions | GET `/kbdy2/fxzykbdy_cxFxzyKbdyIndex.html?kklxdm=<02\|03\|04>` | 是 | read | HTML 选单 |
+| queryMinorSchedules | POST `/kbdy2/fxzykbdy_cxFxzyKbdyTjkbList.html` | 是 | read | grid items |
 | downloadSchedulePdf | POST `/kbdy/bjkbdy_cxXnxqsfkz.html` → `/kbcx/xskbcx_cxXsShcPdf.html` | 是 | download | PDF |
 | downloadAcademiaPdf | POST `/bysxxcx/xscjzbdy_dy*` 六步生成链 + 同源 GET | 是 | download | PDF |
+
+列表类端点一律 `?doType=query&gnmkdm=<功能码>`（见 `postGrid`）。两个容易踩的差异：
+
+- **空闲教室必须带 `jyfs`**（借用方式，`0`=按周次）。只发 `xnm`/`xqm` 会拿到「错误提示」页——
+  这是请求被拒而不是会话失效。时段三个维度（`zcd` 周次位掩码 / `xqj` 星期逗号串 / `jcd` 节次位掩码）
+  是**取交集**：结果是在选中的每个时段都空闲的场地；而且**必须三者同时给**，少给一项服务端会
+  静默忽略整个时段过滤（返回该学期全部场地）。
+- **教学执行计划的过滤参数名与视图页表单不同**：表单是 `nj_cx`/`zyh_id_cx`，数据 Action 是
+  `njdm_id`/`zyh_id`；不带过滤会返回全校 1882 条（单页约 1.4MB）。
+
+## 明确不实现的写接口
+
+缴费的支付/释放订单/生成订单/退费申请、各类申请与评价的提交、个人信息修改、毕业照片确认、
+选课与退课——这些是 `mutation`，涉及金钱或不可逆副作用，不在只读 CLI 的范围内（ADR 规则 5）。
 

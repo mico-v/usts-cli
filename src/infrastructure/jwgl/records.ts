@@ -1,19 +1,19 @@
 import { AuthenticatedTransport, FORM_CONTENT_TYPE } from '../http/authenticated-transport';
 import { ProfileInfo } from '../../types/identity';
 import { CourseListItem, ExamItem, NotificationItem, ScoreItem, SelectedCourseItem } from '../../types/records';
-import { isAmbiguousRejection, isAppError } from '../../domain/errors';
 import { postGrid } from './grid';
 import { formBody } from './form';
 import { parseProfilePage } from './profile-page';
 import { mapCourseListItem, mapExamItem, mapScoreItem, mapSelectedCourseItem } from './mappers';
-import { assertReadableResponse } from './response-policy';
-import { parseJsonValue, RawRecord, recordArray } from './value';
+import { ambiguousRejection, assertReadableResponse } from './response-policy';
+import { parseJsonValue, recordArray } from './value';
 
 /** 成绩、考试、选课名单、已选课程、通知、个人信息这些「记录型」端点。 */
 
 /**
- * 学生成绩查询。主接口被拒/改版时自动回退到备用接口 `cjcx_cxDgXscj.html`
- * （2026-08 实测可用）。
+ * 学生成绩查询的**主**接口。备用接口（`cjcx_cxDgXscj.html`）的调用与回退判定在
+ * `gateway.queryScores` 里——回退必须发生在 `withReauth` 之后（见那里的注释），
+ * 放在这一层会让回退分支永远不可达。
  */
 export async function queryScores(
   t: AuthenticatedTransport,
@@ -21,16 +21,18 @@ export async function queryScores(
   xqm = '',
   extra: Record<string, string> = {},
 ): Promise<ScoreItem[]> {
-  let items: RawRecord[];
-  try {
-    items = await postGrid(t, '/cjcx/cjcx_cxXsgrcj.html', 'N305005', { xnm, xqm, ...extra });
-  } catch (cause) {
-    // 只在主接口**真的改版/被拒**时回退。两类错误必须原样抛出：
-    //   - 会话类错误：交给 withReauth 探测确认并重放，回退会让重放边界失效
-    //   - 空结果是正常情况（新学期就是没成绩），不该为它多发一次请求
-    if (!isAppError(cause) || cause.code !== 'PROTOCOL_CHANGED' || isAmbiguousRejection(cause)) throw cause;
-    items = await postGrid(t, '/cjcx/cjcx_cxDgXscj.html', 'N305005', { xnm, xqm, ...extra });
-  }
+  const items = await postGrid(t, '/cjcx/cjcx_cxXsgrcj.html', 'N305005', { xnm, xqm, ...extra });
+  return items.map(mapScoreItem);
+}
+
+/** 学生成绩查询的备用接口（2026-08 实测可用，返回相同字段）。 */
+export async function queryScoresFallback(
+  t: AuthenticatedTransport,
+  xnm = '',
+  xqm = '',
+  extra: Record<string, string> = {},
+): Promise<ScoreItem[]> {
+  const items = await postGrid(t, '/cjcx/cjcx_cxDgXscj.html', 'N305005', { xnm, xqm, ...extra });
   return items.map(mapScoreItem);
 }
 
@@ -56,7 +58,11 @@ export async function querySelectedCourses(
   }));
   assertReadableResponse(resp, '已选课程查询');
   const data: any = parseJsonValue(resp.data, '已选课程响应');
-  return recordArray(Array.isArray(data) ? data : data?.items).map(mapSelectedCourseItem);
+  const list = Array.isArray(data) ? data : data?.items;
+  // 该接口返回的可能是裸数组，也可能是网格包裹体；`{status:910}` 之类既不是数组也没有
+  // items，若放过去 recordArray 会把它变成空数组，把「请求被拒」伪装成「没有已选课程」。
+  if (!Array.isArray(data) && !Array.isArray(list)) throw ambiguousRejection('已选课程查询', data);
+  return recordArray(list).map(mapSelectedCourseItem);
 }
 
 /**
@@ -81,8 +87,10 @@ export async function queryNotifications(t: AuthenticatedTransport): Promise<Not
   }));
   assertReadableResponse(resp, '通知查询');
   const data: any = parseJsonValue(resp.data, '通知响应');
-  const list = recordArray(Array.isArray(data) ? data : data?.items);
-  return list.map((it: any) => {
+  const list = Array.isArray(data) ? data : data?.items;
+  // 同已选课程：拒绝包裹体不能变成「没有通知」。
+  if (!Array.isArray(data) && !Array.isArray(list)) throw ambiguousRejection('通知查询', data);
+  return recordArray(list).map((it: any) => {
     const content = String(it.xxnr ?? it.content ?? '');
     const title = String(it.xxbt ?? it.title ?? it.bt ?? '');
     return {
@@ -110,5 +118,11 @@ export async function fetchProfile(t: AuthenticatedTransport, username: string):
   );
   assertReadableResponse(resp, '个人信息查询');
   const html: string = typeof resp.data === 'string' ? resp.data : String(resp.data);
-  return parseProfilePage(html, username);
+  const info = parseProfilePage(html, username);
+  // 「一个字段都没解析出来」说明拿到的不是个人信息页（多半是错误提示页或登录页），
+  // 直接返回空资料会把失败伪装成「这位学生没有信息」。
+  if (!info.displayName && !info.college && !info.className && !info.major) {
+    throw ambiguousRejection('个人信息查询', html.slice(0, 200));
+  }
+  return info;
 }

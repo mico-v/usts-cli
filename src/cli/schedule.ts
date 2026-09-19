@@ -5,8 +5,8 @@ import { ensureSession, reportCommandError } from './_shared';
 import { renderSchedule } from './render/schedule';
 
 export async function scheduleCommand(client: ScheduleGateway, opts: { xnm?: string; xqm?: string }): Promise<void> {
-  if (!(await ensureSession(client))) return;
   const term = resolveTerm(opts);
+  if (!(await ensureSession(client))) return;
   try {
     renderSchedule(await readSchedule(client, term), term);
   } catch (e) {

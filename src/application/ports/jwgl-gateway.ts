@@ -9,9 +9,16 @@
  * 单测里的 fake 依旧只需要实现用到的那一两个方法。
  */
 import { AcademiaCourseItem, AcademiaSummary, GpaSummary } from '../../types/academia';
+import { FreeClassroom, FreeClassroomQuery } from '../../types/facilities';
 import { LoginResponse, ProfileInfo } from '../../types/identity';
+import { MinorProgramKind, MinorScheduleEntry, MinorScheduleQuery } from '../../types/minor-programs';
+import { PaymentItem } from '../../types/payments';
+import { PlanCourse, PlanEntry, PlanFilter } from '../../types/planning';
 import { CourseListItem, ExamItem, NotificationItem, ScoreItem, SelectedCourseItem } from '../../types/records';
-import { ClassScheduleItem, ClassScheduleQuery, ClassScheduleView, ScheduleItem, SelectOption } from '../../types/schedule';
+import {
+  CascadeOptions, ClassScheduleItem, ClassScheduleQuery, ClassScheduleView, ScheduleItem, SelectOption,
+} from '../../types/schedule';
+import { WarningStatus } from '../../types/warnings';
 import { LocalSessionInfo, RecoveryResult, SessionLookup, SessionState } from '../../domain/session';
 
 /** 所有业务网关共有的会话能力。 */
@@ -78,6 +85,18 @@ export interface JwglPort extends SessionGateway {
   queryAcademia(): Promise<AcademiaSummary>;
   queryAcademiaCategory(categoryId: string): Promise<AcademiaCourseItem[]>;
   querySelectedCourses(xnm?: string, xqm?: string): Promise<SelectedCourseItem[]>;
+  /** 空闲教室；时段字段留空 = 该学期全部场地（服务端要求 `jyfs`，适配器内部补） */
+  queryFreeClassrooms(query: FreeClassroomQuery): Promise<FreeClassroom[]>;
+  /** 学业预警（视图页直接渲染结论，无数据 Action） */
+  queryWarning(): Promise<WarningStatus>;
+  /** 执行计划视图页的选单与「本专业/本年级」预选值 */
+  getPlanOptions(): Promise<CascadeOptions>;
+  queryPlan(filter: PlanFilter): Promise<PlanEntry[]>;
+  queryPlanCourses(planId: string, courseCode?: string): Promise<PlanCourse[]>;
+  queryPayments(xnm?: string, xqm?: string): Promise<PaymentItem[]>;
+  /** 微专业/辅修课表视图页的选单与预选值 */
+  getMinorScheduleOptions(kind: MinorProgramKind): Promise<CascadeOptions>;
+  queryMinorSchedules(query: MinorScheduleQuery): Promise<MinorScheduleEntry[]>;
   downloadSchedulePdf(xnm: string, xqm: string, name?: string): Promise<Buffer>;
   downloadAcademiaPdf(): Promise<Buffer>;
 }
@@ -98,5 +117,13 @@ export type NotificationsGateway = Pick<JwglPort, SessionCapability | 'queryNoti
 export type GpaGateway = Pick<JwglPort, SessionCapability | 'queryGpa'>;
 export type AcademiaGateway = Pick<JwglPort, SessionCapability | 'queryAcademia' | 'queryAcademiaCategory'>;
 export type SelectedCoursesGateway = Pick<JwglPort, SessionCapability | 'querySelectedCourses'>;
+export type FreeClassroomGateway = Pick<JwglPort, SessionCapability | 'queryFreeClassrooms'>;
+export type WarningGateway = Pick<JwglPort, SessionCapability | 'queryWarning'>;
+export type PlanGateway = Pick<JwglPort, SessionCapability | 'getPlanOptions' | 'queryPlan' | 'queryPlanCourses'>;
+export type PaymentGateway = Pick<JwglPort, SessionCapability | 'queryPayments'>;
+export type MinorScheduleGateway = Pick<
+  JwglPort,
+  SessionCapability | 'getMinorScheduleOptions' | 'queryMinorSchedules'
+>;
 export type ScheduleDocumentGateway = Pick<JwglPort, SessionCapability | 'downloadSchedulePdf'>;
 export type AcademiaDocumentGateway = Pick<JwglPort, SessionCapability | 'downloadAcademiaPdf'>;

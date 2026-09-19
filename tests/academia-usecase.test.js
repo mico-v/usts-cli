@@ -8,7 +8,8 @@ const { renderGpa } = require('../dist/cli/render/gpa');
 const { capture } = require('./capture');
 
 const SUMMARY = {
-  studentId: '2520010711',
+  // 夹具一律用假的学号/班级名：真实学号是敏感信息，而这里只需要一个可断言的字符串。
+  studentId: '20230001',
   gpa: 3.72,
   plannedCourses: 60,
   passedCourses: 42,
@@ -23,10 +24,11 @@ test('学业情况用例：未通过课程为 0 也要出现在统计里，缺�
   const view = await readAcademia({ queryAcademia: async () => SUMMARY });
 
   assert.equal(view.kind, 'overview');
+  // 用例只给字段名；中文标签由 render/academia.ts 映射（架构规则 10）
   assert.deepEqual(view.stats, [
-    { label: '计划总课程', value: 60 },
-    { label: '已通过课程', value: 42 },
-    { label: '未通过课程', value: 0 },
+    { field: 'plannedCourses', value: 60 },
+    { field: 'passedCourses', value: 42 },
+    { field: 'failedCourses', value: 0 },
   ], '0 是有效值，不能按假值丢掉；未修的字段没有就不出现');
 });
 
@@ -66,9 +68,9 @@ test('学业情况渲染：概况打印统计与分类表；分类明细打印�
   const overview = capture(() => renderAcademia({
     kind: 'overview',
     summary: SUMMARY,
-    stats: [{ label: '计划总课程', value: 60 }],
+    stats: [{ field: 'plannedCourses', value: 60 }],
   }));
-  assert.match(overview, /学业情况\s+2520010711/);
+  assert.match(overview, /学业情况\s+20230001/);
   assert.match(overview, /平均绩点：3\.72/);
   assert.match(overview, /计划总课程/);
   assert.match(overview, /思想政治类.*16.*4.*12/, '分类表要带要求/已获/未获学分');
@@ -99,7 +101,7 @@ test('学业情况渲染：什么都解析不出来时摊开页面原文', () =>
 test('GPA 用例与渲染：字段缺失时回落原文，有字段时只列有值的项', async () => {
   const view = await readGpa({ queryGpa: async () => ({ gpa: 3.5, totalCredits: 160, rawText: ['x'] }) });
 
-  assert.deepEqual(view.rows, [['平均绩点', '3.5'], ['总学分', '160']]);
+  assert.deepEqual(view.rows, [{ field: 'gpa', value: '3.5' }, { field: 'totalCredits', value: '160' }]);
   const output = capture(() => renderGpa(view));
   assert.match(output, /学业成绩概览/);
   assert.match(output, /平均绩点.*3\.5/);

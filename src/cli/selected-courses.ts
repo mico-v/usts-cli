@@ -8,8 +8,8 @@ export async function selectedCoursesCommand(
   client: SelectedCoursesGateway,
   opts: { xnm?: string; xqm?: string; json?: boolean },
 ): Promise<void> {
-  if (!(await ensureSession(client))) return;
   const term = resolveTerm(opts);
+  if (!(await ensureSession(client, { json: opts.json, command: "selected-courses" }))) return;
   try {
     const items = await client.querySelectedCourses(term.xnm, term.xqm);
     if (opts.json) {

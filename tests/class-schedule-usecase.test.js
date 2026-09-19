@@ -54,39 +54,39 @@ test('--jg/--zy/--bh 解析出的查询参数：bh 取编号、njmc 取年级显
   const query = await resolveClassQueryByFlags(
     fakeClient(),
     OPTIONS,
-    { jg: '电子', zy: '计算机', bh: '2520401000' },
+    { college: '电子', major: '计算机', bh: '2520401000' },
     { xnm: '2025', xqm: '3' },
   );
 
   assert.deepEqual(query, {
     xnm: '2025',
     xqm: '3',
-    xqhId: '2',
-    njdmId: '2025',
-    zyhId: '0107',
-    bhId: '2520401000',
-    bh: '2520401000',
-    bj: '测试班级',
-    zymc: '计算机科学与技术',
-    jgmc: '电子与信息工程学院',
-    njmc: '2025',
+    campusId: '2',
+    gradeId: '2025',
+    majorId: '0107',
+    classId: '2520401000',
+    classNumber: '2520401000',
+    className: '测试班级',
+    majorName: '计算机科学与技术',
+    collegeName: '电子与信息工程学院',
+    gradeName: '2025',
   });
   assert.equal(gradeLabel('2025', OPTIONS), '2025');
   assert.equal(toClassQuery({
     xnm: '2025', xqm: '3',
     college: OPTIONS.colleges[0], major: { value: '0107', label: '计算机' }, cls: CLASS,
     campusId: '2', gradeId: '2025', gradeName: '2025',
-  }).bh, '2520401000');
+  }).classNumber, '2520401000');
 });
 
-test('缺参数与匹配不到时给出稳定错误码与可操作文案', async () => {
+test('匹配不到时给出稳定错误码与可操作文案', async () => {
   const term = { xnm: '2025', xqm: '3' };
+  // 「缺 --jg/--zy 该怎么提示」由命令层负责（cli/clsched.ts 在进网络之前就拦下并说明开关名），
+  // 用例只接收已经齐备的取值——所以这里只覆盖「值给错了」这一类。
   const cases = [
-    [{ zy: '计算机', bh: 'x' }, /请用 --jg 指定学院/],
-    [{ jg: '不存在的学院', zy: '计算机', bh: 'x' }, /未找到学院：不存在的学院/],
-    [{ jg: '电子', bh: 'x' }, /请用 --zy 指定专业/],
-    [{ jg: '电子', zy: '不存在的专业', bh: 'x' }, /未找到专业：不存在的专业/],
-    [{ jg: '电子', zy: '计算机', bh: '不存在的班级' }, /未找到班级：不存在的班级/],
+    [{ college: '不存在的学院', major: '计算机', bh: 'x' }, /未找到学院：不存在的学院/],
+    [{ college: '电子', major: '不存在的专业', bh: 'x' }, /未找到专业：不存在的专业/],
+    [{ college: '电子', major: '计算机', bh: '不存在的班级' }, /未找到班级：不存在的班级/],
   ];
 
   for (const [flags, pattern] of cases) {
@@ -103,7 +103,7 @@ test('缺参数与匹配不到时给出稳定错误码与可操作文案', async
   // 下拉为空时，--jg/--zy/--bh 路径报的是「未找到 X」（与重构前一致）；
   // 交互式级联那条路另有「该学院暂无专业」这类更贴切的提示（见 cli/clsched-cascade.ts）。
   await assert.rejects(
-    () => resolveClassQueryByFlags(fakeClient({ getClassesByMajor: async () => [] }), OPTIONS, { jg: '电子', zy: '计算机', bh: '2520401000' }, term),
+    () => resolveClassQueryByFlags(fakeClient({ getClassesByMajor: async () => [] }), OPTIONS, { college: '电子', major: '计算机', bh: '2520401000' }, term),
     (error) => error.code === 'CONFIGURATION_ERROR' && /未找到班级：2520401000/.test(error.message),
   );
 });
@@ -117,7 +117,7 @@ test('班级课表分组：按星期与节次排序，实践课单列', async ()
 
   const timetable = await readClassSchedule(
     { queryClassSchedule: async () => ({ items, practice: ['金工实习'] }) },
-    { xnm: '2025', xqm: '3', xqhId: '2', njdmId: '2025', zyhId: '0107', bhId: '1', bh: '1', bj: '测试班级', zymc: '计算机', jgmc: '电子', njmc: '2025' },
+    { xnm: '2025', xqm: '3', campusId: '2', gradeId: '2025', majorId: '0107', classId: '1', classNumber: '1', className: '测试班级', majorName: '计算机', collegeName: '电子', gradeName: '2025' },
   );
 
   assert.deepEqual(timetable.days.map((d) => d.day), [2]);
@@ -128,7 +128,7 @@ test('班级课表分组：按星期与节次排序，实践课单列', async ()
 
   const output = capture(() => renderClassSchedule(
     timetable,
-    { bj: '测试班级' },
+    { className: '测试班级' },
     { xnm: '2025', xqm: '3' },
   ));
   assert.match(output, /班级课表查询\s+测试班级 · 2025-2026 学年 · 第一学期/);
@@ -143,7 +143,7 @@ test('班级课表分组：按星期与节次排序，实践课单列', async ()
 test('班级课表渲染：什么都没有时给提示而不是空表', () => {
   const output = capture(() => renderClassSchedule(
     { days: [], untimed: [], practice: [], courseCount: 0 },
-    { bj: '测试班级' },
+    { className: '测试班级' },
     { xnm: '2025', xqm: '3' },
   ));
 

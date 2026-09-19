@@ -1,4 +1,5 @@
 import { AcademiaCategory, AcademiaSummary, GpaSummary } from '../../types/academia';
+import { AppError } from '../../domain/errors';
 import { cleanHtml, extractVisibleText, matchText, toNumber } from './value';
 
 /**
@@ -9,9 +10,24 @@ import { cleanHtml, extractVisibleText, matchText, toNumber } from './value';
  * 一次请求 + 两个解析器，避免为两条命令发两次完全相同的请求。
  */
 
+/**
+ * 页面带的身份锚点。学分分类树是前端 JS 模板拼出来的，而这段模板必然存在。
+ *
+ * 两个解析器都拿它当「这确实是学业情况页」的证据：没有它说明拿到的是错误提示页或
+ * 登录页，此时返回一个字段全空的 summary 会把「请求被拒」说成「没有任何学分要求」——
+ * 而后者本身就是一个正常的、可信的结论，用户没有理由怀疑。这里抛错由适配器转成
+ * `PROTOCOL_CHANGED`，交给上层按 ambiguous 探测确认。
+ */
+const PAGE_MARKER = /\$\.i18n\.get\('yqxf'\)|id=["']xh_id["']/;
+
 export function parseGpaSummary(html: string): GpaSummary {
   const visible = cleanHtml(html);
   const texts = extractVisibleText(html);
+  if (!PAGE_MARKER.test(html)) {
+    throw new AppError('PROTOCOL_CHANGED', 'GPA 页面结构不符：未找到学分分类模板或学号锚点', {
+      details: { ambiguousSession: true },
+    });
+  }
   // 页面把部分数值写在 <font size="2px"> 里，索引 2 是页面约定的绩点位置
   const fontValues = [...html.matchAll(/<font[^>]*size=["']?2px["']?[^>]*>([\s\S]*?)<\/font>/gi)]
     .map((m) => toNumber(cleanHtml(m[1])))
@@ -43,6 +59,11 @@ const CATEGORY_NODE =
   /"([^"]+?)&nbsp;"\s*\+\s*\$\.i18n\.get\('yqxf'\)\/\* 要求学分 \*\/\s*\+\s*":([0-9.]+)&nbsp;"\s*\+\s*\$\.i18n\.get\('hdxf'\)\/\* 获得学分 \*\/\s*\+\s*":([0-9.]+)&nbsp;&nbsp;"\s*\+\s*\$\.i18n\.get\('whdxf'\)\/\* 未获得学分 \*\/\s*\+\s*":([0-9.]+)&nbsp;"\s*\+\s*"<span id='showKc([^']*)'>/g;
 
 export function parseAcademiaSummary(html: string, fallbackStudentId = ''): AcademiaSummary {
+  if (!PAGE_MARKER.test(html)) {
+    throw new AppError('PROTOCOL_CHANGED', '学业情况页面结构不符：未找到学分分类模板或学号锚点', {
+      details: { ambiguousSession: true },
+    });
+  }
   const text = extractVisibleText(html);
   const sid = matchText(html, /id=["']xh_id["'][^>]*value=["']([^"']+)["']/i) || fallbackStudentId;
 

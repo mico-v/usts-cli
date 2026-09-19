@@ -4,8 +4,8 @@ import { ensureSession, reportCommandError } from './_shared';
 import { renderCourses } from './render/courses';
 
 export async function coursesCommand(client: CourseListGateway, opts: { xnm?: string; xqm?: string }): Promise<void> {
-  if (!(await ensureSession(client))) return;
   const term = resolveTerm(opts);
+  if (!(await ensureSession(client))) return;
   try {
     renderCourses(await client.queryCourseList(term.xnm, term.xqm), term);
   } catch (e) {

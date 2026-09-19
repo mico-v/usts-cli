@@ -1,4 +1,8 @@
 import { AcademiaCourseItem } from '../../types/academia';
+import { FreeClassroom } from '../../types/facilities';
+import { MinorScheduleEntry } from '../../types/minor-programs';
+import { PaymentItem } from '../../types/payments';
+import { PlanCourse, PlanEntry } from '../../types/planning';
 import { CourseListItem, ExamItem, ScoreItem, SelectedCourseItem } from '../../types/records';
 import { ClassScheduleItem, ScheduleItem } from '../../types/schedule';
 import { assertHasAnyField, cleanHtml, matchText, parseSections, RawRecord, toNumber } from './value';
@@ -128,5 +132,81 @@ export function mapAcademiaCourseItem(item: RawRecord): AcademiaCourseItem {
     gpa: toNumber(item.JD),
     displayTerm: [item.JYXDXNMC, item.JYXDXQMC].filter(Boolean).join('·'),
     planned: item.SFJHKC === '是',
+  };
+}
+
+/** 空闲场地。只映射页面真正会展示的列（`kszws1` 等设施字段在实测响应里时有时无）。 */
+export function mapFreeClassroom(item: RawRecord): FreeClassroom {
+  assertHasAnyField(item, ['cdmc', 'cdbh'], '空闲场地条目');
+  return {
+    code: item.cdbh || undefined,
+    name: item.cdmc || '',
+    category: item.cdlbmc || undefined,
+    campus: item.xqmc || undefined,
+    building: item.jxlmc || undefined,
+    seats: toNumber(item.zws),
+    borrowable: item.sfkjy || undefined,
+  };
+}
+
+export function mapPlanEntry(item: RawRecord): PlanEntry {
+  assertHasAnyField(item, ['jxzxjhxx_id', 'zymc'], '执行计划条目');
+  return {
+    id: item.jxzxjhxx_id || undefined,
+    grade: item.njmc || undefined,
+    majorCode: item.zyh || undefined,
+    major: item.zymc || undefined,
+    category: item.dlbs || undefined,
+    taskClass: item.rwbj || undefined,
+    plannedStudents: toNumber(item.jhrs),
+    campus: item.xqmc || undefined,
+    courseCount: toNumber(item.kcs),
+    totalCredits: toNumber(item.zdxf),
+    schoolLength: item.xz || undefined,
+  };
+}
+
+/** 执行计划课程明细；建议修读学期优先用网页拼好的 `yyxdxnxqmc`。 */
+export function mapPlanCourse(item: RawRecord): PlanCourse {
+  assertHasAnyField(item, ['kch', 'kcmc'], '执行计划课程条目');
+  const suggestedTerm = pickRaw(item, ['yyxdxnxqmc']) || [item.jyxdxnm, item.jyxdxqm].filter(Boolean).join('/');
+  return {
+    code: item.kch || undefined,
+    name: item.kcmc || undefined,
+    credit: toNumber(item.xf),
+    hours: toNumber(item.zxs),
+    nature: item.kcxzmc || undefined,
+    category: item.kclbmc || undefined,
+    suggestedTerm: suggestedTerm || undefined,
+    assessMethod: item.khfsdm || undefined,
+    department: item.kkbmmc || undefined,
+  };
+}
+
+/** 缴费记录。金额按原样保留（`500.00` 的位数是账单信息的一部分，不做数值归一）。 */
+export function mapPaymentItem(item: RawRecord): PaymentItem {
+  assertHasAnyField(item, ['zfywsj_ids', 'order_name'], '缴费条目');
+  return {
+    academicYear: item.xnmc || undefined,
+    semester: item.xqmc || undefined,
+    type: item.ywmc || undefined,
+    item: item.order_name || undefined,
+    amount: pickRaw(item, ['order_amount']) || undefined,
+    status: item.sfqr || undefined,
+    paidAt: item.pay_time || undefined,
+    orderId: item.order_id || undefined,
+    payStart: item.jfkssj || undefined,
+    payEnd: item.jfjssj || undefined,
+  };
+}
+
+/** 微专业/辅修课表列表条目（网页只展示学院/年级/专业/课表名称四列）。 */
+export function mapMinorScheduleEntry(item: RawRecord): MinorScheduleEntry {
+  assertHasAnyField(item, ['tjkbmc', 'zymc'], '微专业课表条目');
+  return {
+    college: item.jgmc || undefined,
+    grade: item.njmc || undefined,
+    major: item.zymc || undefined,
+    name: item.tjkbmc || undefined,
   };
 }

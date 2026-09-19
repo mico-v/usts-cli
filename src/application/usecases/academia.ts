@@ -9,9 +9,16 @@ import { AcademiaCategory, AcademiaCourseItem, AcademiaSummary } from '../../typ
 import { AppError } from '../../domain/errors';
 import { AcademiaGateway } from '../ports/jwgl-gateway';
 
-/** 概况里的统计项（只保留远端真有值的项，名称是稳定契约，渲染层不再判断）。 */
+/**
+ * 概况里的统计项：只给**字段名**（稳定契约）与数值，中文标签是展示，
+ * 由 `cli/render/academia.ts` 映射。用例不持有面向人的文案（架构规则 10）。
+ */
+export type AcademiaStatField =
+  | 'plannedCourses' | 'passedCourses' | 'failedCourses' | 'unlearnedCourses'
+  | 'inProgressCourses' | 'unplannedPassedCourses' | 'unplannedFailedCourses';
+
 export interface AcademiaStat {
-  label: string;
+  field: AcademiaStatField;
   value: number;
 }
 
@@ -29,21 +36,17 @@ export interface AcademiaCategoryDetail {
 
 export type AcademiaView = AcademiaOverview | AcademiaCategoryDetail;
 
-const STAT_LABELS: [keyof AcademiaSummary, string][] = [
-  ['plannedCourses', '计划总课程'],
-  ['passedCourses', '已通过课程'],
-  ['failedCourses', '未通过课程'],
-  ['unlearnedCourses', '未修课程'],
-  ['inProgressCourses', '在读课程'],
-  ['unplannedPassedCourses', '计划外已通过'],
-  ['unplannedFailedCourses', '计划外未通过'],
+/** 展示顺序（也是取值顺序）。 */
+const STAT_FIELDS: AcademiaStatField[] = [
+  'plannedCourses', 'passedCourses', 'failedCourses', 'unlearnedCourses',
+  'inProgressCourses', 'unplannedPassedCourses', 'unplannedFailedCourses',
 ];
 
 function toStats(summary: AcademiaSummary): AcademiaStat[] {
   const stats: AcademiaStat[] = [];
-  for (const [key, label] of STAT_LABELS) {
-    const value = summary[key];
-    if (typeof value === 'number') stats.push({ label, value });
+  for (const field of STAT_FIELDS) {
+    const value = summary[field];
+    if (typeof value === 'number') stats.push({ field, value });
   }
   return stats;
 }

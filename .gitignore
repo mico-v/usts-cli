@@ -6,3 +6,6 @@ dist/
 _login_page.html
 captures/
 ref/
+
+# 计划书等本地文档含真实学号/姓名，不入库
+docs/plans/

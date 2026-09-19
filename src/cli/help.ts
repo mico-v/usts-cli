@@ -89,7 +89,7 @@ export const HELP_TOPICS: HelpTopic[] = [
 
         .env 未配置账号密码时，usts login 会交互式询问学号与密码。若该次登录需要图形
         验证码（连续失败触发，无法自动处理），改用 USTS_COOKIES 注入或
-        npm run capture 人工登录后复用会话。
+        改用 USTS_COOKIES 注入浏览器 Cookie（见本节末尾）。
 
         手动注入浏览器 Cookie:
           export USTS_COOKIES="JSESSIONID=xxxx; __jsluid_s=xxxx"
@@ -127,7 +127,8 @@ export const HELP_TOPICS: HelpTopic[] = [
     text: doc(`
       学期参数
 
-        scores / exams / courses / schedule / clsched / selected-courses / schedule-pdf 支持:
+        scores / exams / courses / schedule / clsched / selected-courses / freeclass /
+        payment / minor-schedule / schedule-pdf 支持:
 
           -y, --xnm <学年>   学年，如 2025
           -t, --xqm <学期>   3=第一学期, 12=第二学期, 16=第三学期（小学期）
@@ -207,7 +208,7 @@ export const HELP_TOPICS: HelpTopic[] = [
 
         usts login 一直失败或要求验证码？
           登录是纯脚本，不需要浏览器。「需要图形验证码」说明账号被连续失败锁出，改用
-          USTS_COOKIES 注入已登录浏览器的 Cookie，或 npm run capture 人工登录。
+          改用 USTS_COOKIES 注入已登录浏览器的 Cookie（见上「登录方式」）。
 
         查询返回空数据？
           可能该学期确实没有记录，也可能学期推算不符合预期：用 -y / -t 显式指定重试。

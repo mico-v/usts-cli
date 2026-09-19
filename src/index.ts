@@ -10,7 +10,8 @@ import { loadEnv } from './config/env';
 import { DEFAULT_BASE_URL, loadConfig } from './config/config';
 import { legacySessionFilePath } from './config/paths';
 import { error, warning } from './cli/logger';
-import { errorMessage, exitCodeForError } from './domain/errors';
+import { redactSecret } from './shared/sanitize';
+import { AppError, errorMessage, exitCodeForError, isAppError } from './domain/errors';
 
 /** 版本号从包根目录的 package.json 读取，避免与 package.json 漂移。 */
 function packageVersion(): string {
@@ -40,6 +41,20 @@ function warnAboutLegacySession(): void {
 let baseUrl = DEFAULT_BASE_URL;
 
 const program = new Command();
+
+// Commander 的用法错误默认走 process.exit(1)，而 docs/contracts/cli.md 规定
+// 「配置或参数错误 = 2」。这里接管退出路径，把它并进 2，未知命令/缺参数/未知选项
+// 因此与命令层自报的参数错误（CONFIGURATION_ERROR）落在同一个码上。
+program.exitOverride((cause) => {
+  const code = cause.code;
+  const isHelpOrVersion = code === 'commander.helpDisplayed' || code === 'commander.version';
+  const exitCode = isHelpOrVersion ? 0 : 2;
+  throw new AppError(
+    isHelpOrVersion ? 'UNKNOWN_ERROR' : 'CONFIGURATION_ERROR',
+    cause.message,
+    { cause, details: { commanderExitCode: exitCode, commanderCode: code } },
+  );
+});
 
 program
   .name('usts')
@@ -108,7 +123,14 @@ async function main(): Promise<void> {
   else await program.parseAsync(process.argv);
 }
 
-void main().catch((cause) => {
+void main().catch((cause: unknown) => {
+  // Commander 的 help/version 也走 exitOverride，但它们是正常结束（退出码 0），
+  // 由 exitOverride 标在 details 里区分——这里只决定码，不重复打印消息。
+  const details = isAppError(cause) ? cause.details : undefined;
+  if (details?.commanderExitCode === 0) {
+    process.exitCode = 0;
+    return;
+  }
   process.exitCode = exitCodeForError(cause);
-  console.error(error(errorMessage(cause, '程序异常退出')));
+  console.error(error(redactSecret(errorMessage(cause, '程序异常退出'))));
 });

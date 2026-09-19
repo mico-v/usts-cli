@@ -8,8 +8,8 @@ export async function scoresCommand(
   client: ScoresGateway,
   opts: { xnm?: string; xqm?: string; kcxzdm?: string },
 ): Promise<void> {
-  if (!(await ensureSession(client))) return;
   const term = resolveTerm(opts);
+  if (!(await ensureSession(client))) return;
   try {
     renderScores(await readScores(client, { ...term, kcxzdm: opts.kcxzdm }), term);
   } catch (e) {

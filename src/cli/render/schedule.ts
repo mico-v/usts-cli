@@ -1,4 +1,5 @@
 import { header, info, success } from '../logger';
+import { sanitizeTerminalText } from '../../shared/sanitize';
 import { ScheduleItem } from '../../types/schedule';
 import { termLabel } from '../../domain/term';
 import { ScheduleView } from '../../application/usecases/schedule';
@@ -22,7 +23,7 @@ export function renderSchedule(view: ScheduleView, term: { xnm: string; xqm: str
     for (const c of items) {
       console.log(
         `  ${String(c.startSection).padStart(2)}~${String(c.endSection).padEnd(2)}节  ` +
-          `${c.courseName}  @ ${c.campus || '?'} ${c.className || ''}  ${c.teacher || ''}  ${c.weeks || ''}`,
+          `${sanitizeTerminalText(c.courseName)}  @ ${sanitizeTerminalText(c.campus || '?')} ${sanitizeTerminalText(c.className || '')}  ${sanitizeTerminalText(c.teacher || '')}  ${sanitizeTerminalText(c.weeks || '')}`,
       );
     }
   }

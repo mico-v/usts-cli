@@ -87,7 +87,7 @@ export async function loginViaScript(
     const csrf = csrfMatch ? csrfMatch[1] : '';
     if (!csrf) return { success: false, errorCode: 'PROTOCOL_CHANGED', message: '登录页缺少 csrftoken，接口可能已变更' };
     if (/id="yzm"|name="yzm"/.test(html)) {
-      return { success: false, errorCode: 'CAPTCHA_REQUIRED', message: '账号当前需要图形验证码，无法自动登录。请把浏览器 Cookie 粘贴到 USTS_COOKIES 后运行 usts login，或用 npm run capture 人工登录' };
+      return { success: false, errorCode: 'CAPTCHA_REQUIRED', message: '账号当前需要图形验证码，无法自动登录。请把浏览器 Cookie 粘贴到 USTS_COOKIES 后运行 usts login' };
     }
 
     // 2. 取 RSA 公钥（必须与登录 POST 保持同一会话）
@@ -142,8 +142,8 @@ export async function loginViaScript(
     }
     const body = typeof resp.data === 'string' ? resp.data : firstBody;
     if (/用户名或密码/.test(body)) return { success: false, errorCode: 'INVALID_CREDENTIALS', message: '用户名或密码不正确' };
-    if (/验证码/.test(body)) return { success: false, errorCode: 'CAPTCHA_REQUIRED', message: '账号需要图形验证码，请改用 USTS_COOKIES 或 npm run capture 人工登录' };
-    return { success: false, errorCode: 'REMOTE_SERVER_ERROR', message: '登录失败：未跳转到主菜单，请检查账号密码后重试' };
+    if (/验证码/.test(body)) return { success: false, errorCode: 'CAPTCHA_REQUIRED', message: '账号需要图形验证码，请把浏览器 Cookie 粘贴到 USTS_COOKIES 后运行 usts login' };
+    return { success: false, errorCode: 'REMOTE_SERVER_ERROR', message: '登录未跳转到主菜单（多半是账号密码不正确）' };
   } catch (cause: unknown) {
     return {
       success: false,

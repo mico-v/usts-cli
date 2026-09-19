@@ -22,16 +22,19 @@ export async function clschedCommand(
   if (!opts.bh) {
     assertInteractiveTerminal('班级课表的级联选择', '请改用 --jg/--zy/--bh 指定班级');
   }
+  const { jg, zy } = opts;
+  if (!jg) throw new AppError('CONFIGURATION_ERROR', '指定 --bh 查询具体班级时，必须同时给出 --jg（学院）');
+  if (!zy) throw new AppError('CONFIGURATION_ERROR', '指定 --bh 查询具体班级时，必须同时给出 --zy（专业）');
 
-  if (!(await ensureSession(client))) return;
   const term = concreteTerm(resolveTerm(opts));
+  if (!(await ensureSession(client))) return;
   try {
     const options = await client.getBjkbdyOptions();
     if (!options.colleges.length) {
       throw new AppError('PROTOCOL_CHANGED', '未解析到学院列表，班级课表暂不可用');
     }
     const query = opts.bh
-      ? await resolveClassQueryByFlags(client, options, opts, term)
+      ? await resolveClassQueryByFlags(client, options, { ...opts, college: jg, major: zy }, term)
       : await interactiveCascade(client, options, term);
     renderClassSchedule(await readClassSchedule(client, query), query, term);
   } catch (e) {

@@ -15,8 +15,8 @@ export async function schedulePdfCommand(
   opts: { xnm?: string; xqm?: string; output?: string; force?: boolean },
   store: DocumentStore = new FileDocumentStore(),
 ): Promise<void> {
-  if (!(await ensureSession(client))) return;
   const term = resolveTerm(opts);
+  if (!(await ensureSession(client))) return;
   try {
     const saved = await saveSchedulePdf(client, store, { ...term, output: opts.output, force: opts.force });
     renderDocumentSaved('课表 PDF', saved);

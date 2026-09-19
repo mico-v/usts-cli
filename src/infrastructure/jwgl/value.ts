@@ -36,8 +36,22 @@ export function cleanHtml(value: unknown): string {
     .trim();
 }
 
+/**
+ * 页面可见文本的粗略切分。
+ *
+ * `cleanHtml` 已经把连续空白折成单个空格，所以在它**之后**再按 `\s{2,}` 切分永远切不开——
+ * 整页会变成一条字符串，`--json` 里的 `rawText` 就成了 1.4MB 的单元素数组，终端兜底展示
+ * 还会被 `printTable` 的列宽截成 24 个字符。
+ *
+ * 正确做法是先在**原始 HTML** 上按块级边界切分，再逐块清洗：这样得到的是可读的多条文本，
+ * 而不是一整页。条数上限保留，避免异常巨大的页面把内存和输出撑爆。
+ */
 export function extractVisibleText(html: string): string[] {
-  return cleanHtml(html).split(/\s{2,}|\n+/).map((item) => item.trim()).filter(Boolean).slice(0, 200);
+  const blocks = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .split(/<\/(?:p|div|h[1-6]|li|tr|td|th|section|article|header|footer)>|<br\s*\/?>/i);
+  return blocks.map(cleanHtml).filter(Boolean).slice(0, 200);
 }
 
 export function matchText(value: unknown, pattern: RegExp): string | undefined {
