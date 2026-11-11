@@ -71,6 +71,9 @@ Schedule caveat: `sjkList` items carry `xqj`/`jc` (weekday/section) only for cou
 
 ### Extension pattern for a new query
 
+> Before inventing a path, check `docs/contracts/jwgl-web-api-catalog.md` (curated, with params and
+> live status) and `docs/contracts/jwgl-endpoints-inventory.tsv` (all 504 paths found in the page JS).
+
 1. Add/adjust the stable result type in the matching `types/*.ts` (remote field names do not belong there).
 2. Add DTO mapping under `infrastructure/jwgl/` (`mappers.ts`) and, for HTML pages, a pure parser in a `*-page.ts`. Only map the fields something actually reads — a field that no output path consumes is dead weight.
 3. Add the endpoint adapter as a free function in the matching `infrastructure/jwgl/` module (`records.ts`, `schedule.ts`, `academia.ts`, `document-api.ts`) taking an `AuthenticatedTransport`; use `postGrid` for list endpoints. It must not hold session state.
@@ -93,6 +96,11 @@ Schedule caveat: `sjkList` items carry `xqj`/`jc` (weekday/section) only for cou
 ## Gotchas
 
 - **WAF rate-limiting**: rapid repeated requests get the connection reset (`ERR_CONNECTION_CLOSED`). Wait 30–60s and retry. `loginViaScript` already retries 3× with backoff (via `requestWithRetry`).
+- **Never use `GET /xtgl/index_initMenu.html` as an endpoint-discovery entry point.** On an account
+  whose password is past the rotation deadline the server returns the forced 「请重置密码」 page instead
+  of the menu, and in the same session subsequent business Actions then answer 「错误提示：无功能权限」
+  (a rejected request, not an expired session) until the next fresh login. The 2026-10-31 catalog was
+  collected by avoiding it; fetch view pages/JS directly instead.
 - **Transport failures must be classified by `error.code`, not just the message.** Axios timeouts carry `code: 'ECONNABORTED'` but a message of `"timeout of Nms exceeded"` — string-matching only meant the most common real failure (a connection silently dropped by the WAF) was never retried, so the command gave up after one silent 30s hang. See `classifyFailure` in `infrastructure/http/transport.ts`.
 - **Retry policy is per-`effect`** (`RETRY_POLICY`): `read` 3 attempts and retries timeouts, `auth` **never** retries a timeout (a timed-out login POST may already have succeeded; retrying doubles the failure count toward the captcha lockout), `download` 2, `mutation` 1. Timeouts back off ~250ms (swap the connection), connection resets back off from 3s (likely rate limiting).
 - **Never leave the user staring at a silent terminal.** Requeuing is silent otherwise; `JwglGateway` reports each retry via the structured `onRetry` notice (bound to stderr by `cli/create-client.ts`) (→ stderr, so `--json`/stdout stay clean). Per-request timeout is 15s for normal requests, 45s for downloads — long enough for 正方, short enough not to feel like a hang.

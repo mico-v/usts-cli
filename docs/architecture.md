@@ -43,6 +43,9 @@ cli -> application/domain <- infrastructure
 
 ## 演进方向
 
+> Go 重写版采用同样的依赖方向与协议约束，包结构和迁移步骤见
+> [`go-architecture.md`](go-architecture.md) 与 [ADR-0008](adr/0008-go-rewrite.md)。
+
 按端点能力拆分已完成：适配器（`infrastructure/jwgl/gateway.ts`）只承担会话状态与对外委托，端点模块按记录/课表/
 学业/文档/认证分到 `infrastructure/jwgl/` 各自的文件，共享同一个 `AuthenticatedTransport`、`CookieJar` 与 `SessionStore`。
 

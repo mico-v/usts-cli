@@ -2,6 +2,11 @@
 
 每个端点必须记录：方法、路径、认证、请求字段、响应结构、副作用、幂等性、超时、响应大小、重试规则、错误和脱敏夹具。
 
+> **全量目录**：2026-10-31 对 32 个导航入口、55 个页面 JS 模块做了逐页实测与静态分析，
+> 结果记录在 [`jwgl-web-api-catalog.md`](./jwgl-web-api-catalog.md)（含参数、响应形状、实测状态），
+> 以及机器可读的 [`jwgl-endpoints-inventory.tsv`](./jwgl-endpoints-inventory.tsv)（504 条路径）。
+> 本文只维护「已进入客户端」的契约摘要；新增接口请先查目录，再在本文件补一行摘要。
+
 ## 公共约束
 
 - Base URL 默认固定为 `https://jwgl.usts.edu.cn/jwglxt`。

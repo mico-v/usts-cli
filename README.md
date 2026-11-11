@@ -82,6 +82,21 @@ node dist/index.js --help
 
 接口契约与实测结论见 [WEB_ARCHITECTURE.md](WEB_ARCHITECTURE.md)，架构约定见 [CLAUDE.md](CLAUDE.md)。
 
+### Go 重写分支
+
+`rewrite/go` 分支包含并行的 Go 实现（Go 1.23+），当前不替换 npm 发布入口：
+
+```bash
+make build         # 生成 bin/usts
+make test
+make race
+make check         # go vet + go test
+bin/usts --help
+```
+
+Go 版架构见 [docs/go-architecture.md](docs/go-architecture.md)，重写决策见
+[ADR-0008](docs/adr/0008-go-rewrite.md)，验证记录见 [docs/validation.md](docs/validation.md)。
+
 ## 许可
 
 [MIT](LICENSE)

@@ -210,3 +210,46 @@
   学院 `jgmc`/年级 `njmc`/专业 `zymc`/课表名称 `tjkbmc` 四列，**列出的是一张张课表而不是课表内容**；
   本轮账号无微专业数据（合法空 `{items,totalCount}`），因此这四个字段尚未在有数据账号上校验。
   ⚠️ **未实现**：`批量输出EXCEL`（`fxzykbdy_cxDcExcelFxzykb.html`）与课表预览（`fxzykbdy_ylFxzykbdyIndex.html`）。
+
+
+## 8. 2026-10-31 全量接口采集（32 个导航入口 + 55 个 JS 模块）
+
+完整结果见 [`docs/contracts/jwgl-web-api-catalog.md`](docs/contracts/jwgl-web-api-catalog.md)，
+机器可读清单见 [`docs/contracts/jwgl-endpoints-inventory.tsv`](docs/contracts/jwgl-endpoints-inventory.tsv)。
+
+### 8.1 采集方法
+
+1. 逐个 `GET` 32 个入口的视图页，**每个都带 `?gnmkdm=<功能码>`**；
+2. 从页面 HTML 提取 55 个 `/jwglxt/js/...` 模块，静态分析 `.html` 端点、`paramMap()`、
+   `url:` 与 `data:` 字段；
+3. 对只读 Action 以真实会话实测（2.6s 间隔避免 WAF），记录状态、响应形状和条数；
+4. 个人数据只留在 `/tmp`，不入库。
+
+### 8.2 本轮新增确认的只读端点
+
+| 功能 | 方法 | 路径 | 关键参数 |
+|---|---|---|---|
+| 学生信息富查询 | GET | `/xsxxxggl/xsxxwh_cxCkDgxsxx.html?gnmkdm=N100801` | 无（63 字段对象） |
+| 等级考试 | GET | `/xsxxxggl/xsxxwh_cxDjksxx.html?gnmkdm=N100801` | `xh_id,fromXh_id` |
+| 家庭成员 | GET | `/xsxxxggl/xsxxwh_cxXsjtcy.html?gnmkdm=N100801` | `xh_id,fromXh_id` |
+| 已选课程（个人信息页） | GET | `/xsxxxggl/xsxxwh_cxXsxkxx.html?gnmkdm=N100801` | `xh_id,fromXh_id` |
+| 选课状态文本 | POST | `/xsxxxggl/xsxxwh_cxViewKbzg.html?gnmkdm=N100801` | `xnm,xqm,fromXh_id` → `1/2/3` |
+| 考试未排考 | POST | `/kwgl/kscx_cxWpkskcList.html?doType=query&gnmkdm=N358105` | `xnm,xqm` |
+| 执行计划课程明细 | POST | `/jxzxjhgl/jxzxjhkcxx_cxJxzxjhkcxxIndex.html?doType=query&gnmkdm=N153540` | `jxzxjhxx_id` 等 |
+| 成绩分项 | GET | `/cjcx/cjcx_cxCjxqGjh.html` | `jxb_id,xnm,xqm,xh_id,kcmc` |
+| 课程基本信息 | GET | `/jxjhgl/common_cxKcJbxx.html` | `id=<课程代码>` |
+| 班级课表（网页主接口） | POST | `/kbdy/bjkbdy_cxBjkbdyTjkbList.html` | `xnm,xqm,xqh_id,njdm_id,zyh_id,bh_id,...` |
+| 公共级联下拉 | GET | `/xtgl/comm_cxKkbmList.html`、`comm_cxNjPaged/XydmPaged/ZydmPaged/BjdmPaged`、`query/query_cxXqList.html`、`xkgl/common_queryKclbListPaged/KcxzPaged/KcgsPaged/SkjcList` | 分页字段/`localeKey` |
+
+### 8.3 重要坑
+
+- **当前账号的 `GET /xtgl/index_initMenu.html` 返回「请重置密码」页**，不是菜单；
+  访问之后同一会话的业务 Action 会统一变成「错误提示：无功能权限」，直到重新登录。
+  做接口探索时**不要先请求它**；需要菜单清单时用 2026-09 的抓包表或先完成密码重置。
+- **JSON 响应的 Content-Type 常是 `text/html`**，且 axios 可能已经自动把 body 解析成对象；
+  判断类型要看 body 本身，不要 `String(response.data)`（会得到 `[object Object]`）。
+- `POST /xsxxxggl/xsxxwh_cxCkDgxsxx.html`（页面 JS 的用法）本轮返回空 body；
+  同路径 **GET** 可拿到 63 字段对象。
+- `GET /xsxxxggl/xsxxwh_cxXxqm.html` 不存在（页面 JS 里已注释），报「cxXxqm 未定义」。
+- 班级课表有两个列表接口：网页用 `bjkbdy_cxBjkbdyTjkbList.html`，客户端用
+  `bjkbdy_cxBjKb.html`；两者参数同源，`bh` 都必须是班级编号而非名称。
