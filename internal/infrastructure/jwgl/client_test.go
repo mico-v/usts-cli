@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mico-v/usts-cli/internal/domain"
 	"github.com/mico-v/usts-cli/internal/infrastructure/sessionstore"
 )
 
@@ -108,5 +109,39 @@ func TestLoginViaScriptRetriesFirstWAFResetAndPersistsSession(t *testing.T) {
 	}
 	if !strings.Contains(session.Username, "2025T000001") {
 		t.Fatalf("unexpected username: %s", session.Username)
+	}
+}
+
+func TestProbeSessionRequiresCompleteValidEnvelope(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+		want   domain.SessionState
+	}{
+		{"complete", 200, `{"items":[],"totalCount":0}`, domain.SessionValid},
+		{"missing total", 200, `{"items":[]}`, domain.SessionUnknown},
+		{"server error", 500, `{"items":[],"totalCount":0}`, domain.SessionUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.WriteHeader(test.status)
+				_, _ = writer.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL+"/jwglxt", ClientOptions{
+				Launch: map[string]string{
+					"USTS_ALLOW_CUSTOM_HOST": "1", "USTS_ALLOW_INSECURE_HTTP": "1",
+					"USTS_STATE_DIR": t.TempDir(),
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.SetCookies("JSESSIONID=test")
+			if got := client.ProbeSession(context.Background()); got != test.want {
+				t.Fatalf("ProbeSession() = %s, want %s", got, test.want)
+			}
+		})
 	}
 }

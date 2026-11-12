@@ -18,14 +18,14 @@ func TestRegistryContainsAllCommands(t *testing.T) {
 	expected := []string{
 		"login", "logout", "scores", "exams", "courses", "schedule", "clsched", "profile",
 		"gpa", "notifications", "academia", "selected-courses", "freeclass", "warning",
-		"plan", "payment", "minor-schedule", "schedule-pdf", "academia-pdf",
+		"plan", "payment", "minor-schedule", "course", "bysj", "lookup", "schedule-pdf", "academia-pdf",
 	}
 	for _, name := range expected {
 		if _, ok := FindCommand(name); !ok {
 			t.Fatalf("command %q is not registered", name)
 		}
 	}
-	if len(QueryCommands()) != 16 {
+	if len(QueryCommands()) != 19 {
 		t.Fatalf("query command count = %d", len(QueryCommands()))
 	}
 }
@@ -98,6 +98,9 @@ func TestWriteTableKeepsCJKAlignment(t *testing.T) {
 func TestSelectViewportScrollsWithSelection(t *testing.T) {
 	if rows := selectVisibleRows(8, 17); rows != 3 {
 		t.Fatalf("visible rows = %d, want 3", rows)
+	}
+	if rows := selectVisibleRows(24, 17); rows != 7 {
+		t.Fatalf("standard terminal visible rows = %d, want 7", rows)
 	}
 	tests := []struct {
 		selected int
@@ -186,6 +189,23 @@ func TestClassScheduleYearRangeIncludesFutureYears(t *testing.T) {
 	}
 	if value != strconv.Itoa(current+5) {
 		t.Fatalf("class year choice = %s, want %d", value, current+5)
+	}
+}
+
+func TestTermYearChoicesStartAtCalendarYear(t *testing.T) {
+	now := time.Date(2027, 3, 15, 0, 0, 0, 0, time.Local)
+	var buffer bytes.Buffer
+	app := &App{
+		In:  bufio.NewReader(strings.NewReader("1\n")),
+		Out: &buffer,
+		Now: func() time.Time { return now },
+	}
+	value, err := promptYear(app, "2026")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "2027" {
+		t.Fatalf("first year choice = %s, want 2027", value)
 	}
 }
 

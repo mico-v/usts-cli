@@ -61,6 +61,8 @@ func NewClient(baseURL string, options ClientOptions) (*Client, error) {
 }
 
 func (c *Client) RestoreSession() bool {
+	c.sessionIOMu.Lock()
+	defer c.sessionIOMu.Unlock()
 	c.mu.Lock()
 	loggedOut := c.loggedOut
 	c.mu.Unlock()
@@ -267,10 +269,14 @@ func (c *Client) persistRotatedCookies() {
 }
 
 func (c *Client) withReauth(ctx context.Context, effect httpclient.Effect, operation func() error) error {
+	epoch := c.currentLogoutEpoch()
 	for replay := 1; replay >= 0; replay-- {
 		err := operation()
 		if err == nil {
 			return nil
+		}
+		if c.currentLogoutEpoch() != epoch {
+			return domain.NewError(domain.CodeAuthentication, "会话已退出，本次操作已取消")
 		}
 		if effect == httpclient.EffectMutation {
 			return err
@@ -283,9 +289,19 @@ func (c *Client) withReauth(ctx context.Context, effect httpclient.Effect, opera
 			return err
 		}
 		c.sessions.MarkExpired()
-		if recovery := c.sessions.Recover(ctx); !recovery.OK {
+		recovery := c.sessions.Recover(ctx)
+		if c.currentLogoutEpoch() != epoch {
+			return domain.NewError(domain.CodeAuthentication, "会话已退出，本次操作已取消")
+		}
+		if !recovery.OK {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c *Client) currentLogoutEpoch() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.logoutEpoch
 }

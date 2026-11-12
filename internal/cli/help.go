@@ -82,7 +82,7 @@ var helpTopics = []helpTopic{
   错误写到 stderr，同样是版本化信封。退出码:
     0 成功
     2 配置或参数错误
-    3 登录、会话、凭证或验证码问题
+    3 登录、会话、凭证、验证码或权限问题
     4 网络、限流或远端服务错误
     5 远端协议/响应结构变化
     6 本地文件系统错误`,
@@ -126,7 +126,6 @@ func WriteRootHelp(writer io.Writer, version string) {
 		fmt.Fprintf(writer, "  %-18s %s\n", spec.Name, spec.Summary)
 	}
 	fmt.Fprintf(writer, "  %-18s %s\n", "help", "查看详细文档或命令帮助")
-	fmt.Fprintf(writer, "  %-18s %s\n", "version", "显示版本")
 	fmt.Fprintln(writer, `
 通用学期参数:
   -y, --xnm <学年>   学年，如 2025

@@ -104,3 +104,15 @@ func TestSessionManagerRecoveryCooldown(t *testing.T) {
 		t.Fatalf("login calls = %d, want 1", port.loginCalls.Load())
 	}
 }
+
+func TestSessionManagerPreservesRecoveryErrorCode(t *testing.T) {
+	port := &fakeSessionPort{
+		restore: true, probe: domain.SessionExpired,
+		login: domain.LoginResponse{Success: false, ErrorCode: domain.CodeRateLimited, Message: "slow down"},
+	}
+	manager := NewSessionManager(port, SessionManagerOptions{Now: time.Now})
+	result := manager.Recover(context.Background())
+	if result.OK || result.ErrorCode != domain.CodeRateLimited || !result.Retryable {
+		t.Fatalf("unexpected recovery result: %#v", result)
+	}
+}

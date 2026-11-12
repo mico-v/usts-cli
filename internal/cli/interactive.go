@@ -12,6 +12,7 @@ import (
 
 	"github.com/mico-v/usts-cli/internal/application"
 	"github.com/mico-v/usts-cli/internal/domain"
+	"github.com/mico-v/usts-cli/internal/infrastructure/jwgl"
 	"golang.org/x/term"
 )
 
@@ -274,6 +275,88 @@ func interactiveScoresArgs(ctx context.Context, app *App) ([]string, error) {
 	return args, nil
 }
 
+func interactiveExamsArgs(ctx context.Context, app *App) ([]string, error) {
+	args, err := interactiveTermArgs(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	kind, err := PromptSelect(app, "考试查询类型", []promptChoice{
+		{Label: "已排考考试", Value: "scheduled"},
+		{Label: "未排考课程", Value: "unplanned"},
+	}, 0)
+	if err != nil {
+		return nil, err
+	}
+	if kind == "unplanned" {
+		args = append(args, "--unplanned")
+	}
+	return args, nil
+}
+
+func interactiveCoursesArgs(ctx context.Context, app *App) ([]string, error) {
+	args, err := interactiveTermArgs(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	view, err := PromptSelect(app, "选课名单视图", []promptChoice{
+		{Label: "课程摘要", Value: "summary"},
+		{Label: "学生名单明细", Value: "details"},
+	}, 0)
+	if err != nil {
+		return nil, err
+	}
+	if view == "details" {
+		args = append(args, "--details")
+	}
+	return args, nil
+}
+
+func interactiveSelectedCoursesArgs(ctx context.Context, app *App) ([]string, error) {
+	args, err := interactiveTermArgs(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	view, err := PromptSelect(app, "已选课程视图", []promptChoice{
+		{Label: "已选课程摘要", Value: "summary"},
+		{Label: "选课板块课程", Value: "--blocks"},
+		{Label: "已选/意向/间听视图", Value: "--chosen"},
+		{Label: "历年已获学分", Value: "--credits"},
+		{Label: "评教状态", Value: "--evaluation-status"},
+	}, 0)
+	if err != nil {
+		return nil, err
+	}
+	if view != "summary" {
+		args = append(args, view)
+	}
+	return args, nil
+}
+
+func interactiveCourseInfoArgs(_ context.Context, app *App) ([]string, error) {
+	for {
+		courseCode, err := PromptLine(app, "课程号: ")
+		if err != nil {
+			return nil, err
+		}
+		if courseCode != "" {
+			return []string{"--id", courseCode}, nil
+		}
+		fmt.Fprintln(app.Err, app.Warning("课程号不能为空"))
+	}
+}
+
+func interactiveLookupArgs(_ context.Context, app *App) ([]string, error) {
+	choices := make([]promptChoice, 0)
+	for _, kind := range jwgl.LookupKinds() {
+		choices = append(choices, promptChoice{Label: kind, Value: kind})
+	}
+	kind, err := PromptSelect(app, "字典类型", choices, 0)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"--kind", kind}, nil
+}
+
 func interactiveFreeClassArgs(ctx context.Context, app *App) ([]string, error) {
 	args, err := interactiveTermArgs(ctx, app)
 	if err != nil {
@@ -376,10 +459,7 @@ func interactiveAcademiaPDFArgs(_ context.Context, app *App) ([]string, error) {
 }
 
 func promptYear(app *App, defaultValue string) (string, error) {
-	current, _ := strconv.Atoi(defaultValue)
-	if current == 0 {
-		current = time.Now().Year()
-	}
+	current := app.Now().Year()
 	var choices []promptChoice
 	defaultIndex := 0
 	for year := current; year >= current-5; year-- {

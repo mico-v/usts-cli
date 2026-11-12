@@ -7,6 +7,7 @@ import (
 
 	"github.com/mico-v/usts-cli/internal/application"
 	"github.com/mico-v/usts-cli/internal/domain"
+	"github.com/mico-v/usts-cli/internal/infrastructure/jwgl"
 )
 
 var dayNames = []string{"周一", "周二", "周三", "周四", "周五", "周六", "周日"}
@@ -59,6 +60,27 @@ func renderCourses(app *App, items []domain.CourseListItem, term domain.Term) {
 	fmt.Fprintln(app.Out, app.Success(fmt.Sprintf("共 %d 条选课记录", len(items))))
 }
 
+func renderCourseDetails(app *App, items []domain.CourseListItem, term domain.Term) {
+	fmt.Fprintln(app.Out, app.Header("选课名单明细   "+domain.TermLabel(term.AcademicYear, term.Semester)))
+	if len(items) == 0 {
+		fmt.Fprintln(app.Out, app.Info("该学期暂无选课记录"))
+		return
+	}
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, []string{
+			stringValue(item.StudentID, ""), stringValue(item.StudentName, ""),
+			stringValue(item.ClassName, ""), stringValue(item.Major, ""),
+			stringValue(item.Grade, ""), stringValue(item.College, ""),
+			item.CourseName, item.CourseCode, item.Credit, item.Teacher,
+			item.TeachingClass, stringValue(item.TeachingTime, ""),
+			stringValue(item.TeachingPlace, ""), stringValue(item.Status, ""),
+		})
+	}
+	WriteTable(app.Out, []string{"学号", "姓名", "班级", "专业", "年级", "学院", "课程", "课程号", "学分", "教师", "教学班", "时间", "地点", "状态"}, rows, TableOptions{MaxColumnWidth: 20})
+	fmt.Fprintln(app.Out, app.Success(fmt.Sprintf("共 %d 条选课名单记录", len(items))))
+}
+
 func renderSchedule(app *App, view application.ScheduleView, term domain.Term) {
 	fmt.Fprintln(app.Out, app.Header("个人课表查询   "+domain.TermLabel(term.AcademicYear, term.Semester)))
 	if view.Total == 0 {
@@ -69,9 +91,9 @@ func renderSchedule(app *App, view application.ScheduleView, term domain.Term) {
 		fmt.Fprintln(app.Out, app.Header(dayNames[day.Day-1]))
 		for _, item := range day.Items {
 			fmt.Fprintf(app.Out, "  %2d~%-2d节  %s  @ %s %s  %s  %s\n",
-				intValue(item.StartSection), intValue(item.EndSection), SanitizeTerminalText(item.CourseName),
-				SanitizeTerminalText(stringValue(item.Campus, "?")), SanitizeTerminalText(stringValue(item.ClassName, "")),
-				SanitizeTerminalText(stringValue(item.Teacher, "")), SanitizeTerminalText(stringValue(item.Weeks, "")),
+				intValue(item.StartSection), intValue(item.EndSection), SanitizeLine(item.CourseName),
+				SanitizeLine(stringValue(item.Campus, "?")), SanitizeLine(stringValue(item.ClassName, "")),
+				SanitizeLine(stringValue(item.Teacher, "")), SanitizeLine(stringValue(item.Weeks, "")),
 			)
 		}
 	}
@@ -79,10 +101,10 @@ func renderSchedule(app *App, view application.ScheduleView, term domain.Term) {
 		fmt.Fprintln(app.Out, app.Header("其他课程（无固定时间）"))
 		for _, item := range view.Untimed {
 			fmt.Fprintf(app.Out, "  %s  @ %s %s  %s  %s  学分:%s  %s  %s\n",
-				SanitizeTerminalText(item.CourseName), SanitizeTerminalText(stringValue(item.Campus, "?")),
-				SanitizeTerminalText(stringValue(item.ClassName, "")), SanitizeTerminalText(stringValue(item.Teacher, "")),
-				SanitizeTerminalText(stringValue(item.Weeks, "")), floatString(item.Credit),
-				SanitizeTerminalText(stringValue(item.CourseType, "")), SanitizeTerminalText(stringValue(item.AssessMethod, "")),
+				SanitizeLine(item.CourseName), SanitizeLine(stringValue(item.Campus, "?")),
+				SanitizeLine(stringValue(item.ClassName, "")), SanitizeLine(stringValue(item.Teacher, "")),
+				SanitizeLine(stringValue(item.Weeks, "")), floatStringOrDash(item.Credit),
+				SanitizeLine(stringValue(item.CourseType, "")), SanitizeLine(stringValue(item.AssessMethod, "")),
 			)
 		}
 	}
@@ -103,9 +125,9 @@ func renderClassSchedule(app *App, view application.ClassTimetable, query domain
 				teacher += "(" + *item.TeacherTitle + ")"
 			}
 			fmt.Fprintf(app.Out, "  %s节  %s  @ %s  %s  %s%s\n",
-				sectionRange(item.StartSection, item.EndSection), SanitizeTerminalText(item.CourseName),
-				SanitizeTerminalText(stringValue(item.Room, "?")), SanitizeTerminalText(teacher),
-				SanitizeTerminalText(stringValue(item.Weeks, "")), creditSuffix(item.Credit),
+				sectionRange(item.StartSection, item.EndSection), SanitizeLine(item.CourseName),
+				SanitizeLine(stringValue(item.Room, "?")), SanitizeLine(teacher),
+				SanitizeLine(stringValue(item.Weeks, "")), creditSuffix(item.Credit),
 			)
 		}
 	}
@@ -113,13 +135,13 @@ func renderClassSchedule(app *App, view application.ClassTimetable, query domain
 		fmt.Fprintln(app.Out, app.Header("其他课程（无固定时间）"))
 		for _, item := range view.Untimed {
 			fmt.Fprintf(app.Out, "  %s  @ %s  %s  %s\n",
-				SanitizeTerminalText(item.CourseName), SanitizeTerminalText(stringValue(item.Room, "?")),
-				SanitizeTerminalText(stringValue(item.Teacher, "")), SanitizeTerminalText(stringValue(item.Weeks, "")),
+				SanitizeLine(item.CourseName), SanitizeLine(stringValue(item.Room, "?")),
+				SanitizeLine(stringValue(item.Teacher, "")), SanitizeLine(stringValue(item.Weeks, "")),
 			)
 		}
 	}
 	for _, practice := range view.Practice {
-		fmt.Fprintln(app.Out, app.Info("实践课："+SanitizeTerminalText(practice)))
+		fmt.Fprintln(app.Out, app.Info("实践课："+SanitizeLine(practice)))
 	}
 	suffix := ""
 	if len(view.Practice) > 0 {
@@ -251,7 +273,7 @@ func renderProfile(app *App, profile domain.ProfileInfo) {
 	fmt.Fprintln(app.Out, app.Header("个人信息"))
 	line := func(label, value string) {
 		if value != "" {
-			fmt.Fprintf(app.Out, "  %s %s\n", app.Info(label), SanitizeTerminalText(value))
+			fmt.Fprintf(app.Out, "  %s %s\n", app.Info(label), SanitizeLine(value))
 		}
 	}
 	line("学号  ", profile.StudentID)
@@ -268,6 +290,140 @@ func renderProfile(app *App, profile domain.ProfileInfo) {
 	fmt.Fprintln(app.Out, app.Success("信息获取完成"))
 }
 
+func renderRichProfile(app *App, profile domain.RichProfile) {
+	fmt.Fprintln(app.Out, app.Header("完整学生信息"))
+	line := func(label string, value string) {
+		if value != "" {
+			fmt.Fprintf(app.Out, "  %s %s\n", app.Info(label), SanitizeLine(value))
+		}
+	}
+	line("学号      ", profile.StudentID)
+	line("姓名      ", profile.DisplayName)
+	line("姓名拼音  ", stringValue(profile.NamePinyin, ""))
+	line("性别代码  ", stringValue(profile.GenderCode, ""))
+	line("民族      ", stringValue(profile.Nationality, ""))
+	line("出生日期  ", stringValue(profile.BirthDate, ""))
+	line("证件类型  ", stringValue(profile.IDType, ""))
+	line("证件号码  ", stringValue(profile.IDCard, ""))
+	line("手机      ", stringValue(profile.Phone, ""))
+	line("邮箱      ", stringValue(profile.Email, ""))
+	line("家庭地址  ", stringValue(profile.Address, ""))
+	line("家庭所在地", stringValue(profile.HomePlace, ""))
+	line("邮政编码  ", stringValue(profile.PostalCode, ""))
+	line("政治面貌  ", stringValue(profile.PoliticalStatus, ""))
+	line("入学日期  ", stringValue(profile.EnrollmentDate, ""))
+	line("学籍状态  ", stringValue(profile.StudentStatus, ""))
+	line("学院      ", stringValue(profile.CollegeName, ""))
+	line("专业 ID   ", stringValue(profile.MajorID, ""))
+	line("班级 ID   ", stringValue(profile.ClassID, ""))
+	line("年级 ID   ", stringValue(profile.GradeID, ""))
+	line("培养层次  ", stringValue(profile.TrainingLevel, ""))
+	line("培养方式  ", stringValue(profile.StudyForm, ""))
+	line("学制      ", stringValue(profile.StudyLength, ""))
+	line("预计毕业  ", stringValue(profile.ExpectedGraduation, ""))
+	line("考生号    ", stringValue(profile.CandidateNumber, ""))
+	line("考生类别  ", stringValue(profile.CandidateCategory, ""))
+	line("生源地    ", stringValue(profile.StudentSource, ""))
+	if profile.HasPhoto != nil {
+		line("是否有照片", map[bool]string{true: "是", false: "否"}[*profile.HasPhoto])
+	}
+	fmt.Fprintln(app.Out, app.Success("信息获取完成"))
+}
+
+func renderHTMLDetail(app *App, detail domain.HTMLDetail, fallbackTitle string) {
+	title := strings.TrimSpace(detail.Title)
+	if title == "" {
+		title = fallbackTitle
+	}
+	fmt.Fprintln(app.Out, app.Header(title))
+	for _, message := range detail.Messages {
+		fmt.Fprintln(app.Out, app.Info(message))
+	}
+	for index, table := range detail.Tables {
+		if index > 0 {
+			fmt.Fprintln(app.Out)
+		}
+		headers := table.Headers
+		if len(headers) == 0 && len(table.Rows) > 0 {
+			for column := range table.Rows[0] {
+				headers = append(headers, fmt.Sprintf("第%d列", column+1))
+			}
+		}
+		WriteTable(app.Out, headers, table.Rows, TableOptions{MaxColumnWidth: 32})
+	}
+	if len(detail.Tables) == 0 {
+		for _, text := range detail.Text {
+			fmt.Fprintln(app.Out, SanitizeLine(text))
+		}
+	}
+}
+
+func renderTableResult(app *App, result domain.TableResult) {
+	title := result.Section
+	labels := map[string]string{
+		"bysj":                             "毕业设计成绩",
+		jwgl.ProfileSectionPrimaryMajor:    "主修专业信息",
+		jwgl.ProfileSectionSecondaryMajor:  "辅修专业信息",
+		jwgl.ProfileSectionUnassignedMajor: "微专业信息",
+		jwgl.ProfileSectionExamLevels:      "等级考试",
+		jwgl.ProfileSectionFamily:          "家庭成员",
+		jwgl.ProfileSectionRecords:         "学习简历",
+		jwgl.ProfileSectionAcademicYears:   "学年鉴定",
+		jwgl.ProfileSectionSelectedCourses: "已选课程（个人信息页）",
+		"teaching-units":                   "开课单位",
+		"grades":                           "年级",
+		"colleges":                         "学院",
+		"majors":                           "专业",
+		"classes":                          "班级",
+		"campuses":                         "校区",
+		"course-categories":                "课程类别",
+		"course-natures":                   "课程性质",
+		"course-ownerships":                "课程归属",
+		"teaching-methods":                 "教学方式",
+		"class-times":                      "上课时间",
+		"sections":                         "上课节次",
+	}
+	if label := labels[result.Section]; label != "" {
+		title = label
+	}
+	if result.Section == jwgl.ProfileSectionClasses {
+		title = "班级信息"
+	}
+	fmt.Fprintln(app.Out, app.Header(title))
+	if len(result.Rows) == 0 {
+		fmt.Fprintln(app.Out, app.Info("暂无记录"))
+		return
+	}
+	WriteTable(app.Out, result.Headers, result.Rows, TableOptions{MaxColumnWidth: 30})
+	fmt.Fprintln(app.Out, app.Success(fmt.Sprintf("共 %d 条记录", len(result.Rows))))
+}
+
+func renderSelectionStatus(app *App, status domain.SelectionStatus) {
+	fmt.Fprintln(app.Out, app.Header("选课状态"))
+	fmt.Fprintf(app.Out, "  状态码：%s\n", SanitizeLine(status.Code))
+}
+
+func renderUnplannedExams(app *App, items []domain.UnplannedExamItem, term domain.Term) {
+	fmt.Fprintln(app.Out, app.Header("未排考课程   "+domain.TermLabel(term.AcademicYear, term.Semester)))
+	if len(items) == 0 {
+		fmt.Fprintln(app.Out, app.Info("暂无未排考课程"))
+		return
+	}
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, []string{
+			item.CourseName, item.CourseCode, stringValue(item.ExamName, ""),
+			stringValue(item.TeachingClass, ""), stringValue(item.Teacher, ""),
+			stringValue(item.College, ""), floatString(item.Credit),
+			stringValue(item.StudentID, ""), stringValue(item.StudentName, ""),
+			stringValue(item.ClassName, ""), stringValue(item.Major, ""),
+			stringValue(item.Process, ""),
+		})
+	}
+	WriteTable(app.Out, []string{"课程", "课程号", "考试名称", "教学班", "教师", "开课学院", "学分", "学号", "姓名", "班级", "专业", "进程"}, rows, TableOptions{MaxColumnWidth: 18})
+	fmt.Fprintln(app.Out, app.Success(fmt.Sprintf("共 %d 条未排考课程", len(items))))
+}
+
 func renderNotifications(app *App, items []domain.NotificationItem) {
 	fmt.Fprintln(app.Out, app.Header("通知 / 待办"))
 	if len(items) == 0 {
@@ -279,6 +435,8 @@ func renderNotifications(app *App, items []domain.NotificationItem) {
 		unread := ""
 		if item.Unread != nil {
 			unread = map[bool]string{true: "是", false: "否"}[*item.Unread]
+		} else {
+			unread = "-"
 		}
 		rows = append(rows, []string{
 			stringValue(item.CreatedAt, ""), stringValue(item.Type, ""), stringValue(item.Title, ""),
@@ -404,7 +562,7 @@ func renderSelectedCourses(app *App, items []domain.SelectedCourseItem, term dom
 	for _, item := range items {
 		capacity := ""
 		if item.Capacity != nil || item.SelectedNumber != nil {
-			capacity = fmt.Sprintf("%s/%s", floatString(item.Capacity), floatString(item.SelectedNumber))
+			capacity = fmt.Sprintf("%s/%s", floatStringOrDash(item.Capacity), floatStringOrDash(item.SelectedNumber))
 		}
 		rows = append(rows, []string{
 			stringValue(item.Title, ""), stringValue(item.CourseID, ""), stringValue(item.ClassID, ""),
@@ -533,6 +691,13 @@ func floatString(value *float64) string {
 func floatStringZero(value *float64) string {
 	if value == nil {
 		return "0"
+	}
+	return formatFloat(*value)
+}
+
+func floatStringOrDash(value *float64) string {
+	if value == nil {
+		return "-"
 	}
 	return formatFloat(*value)
 }

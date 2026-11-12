@@ -2,15 +2,27 @@ package cli
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"strings"
 
 	"github.com/mico-v/usts-cli/internal/domain"
+	"github.com/mico-v/usts-cli/internal/infrastructure/jwgl"
 )
 
 type loginOptions struct{ CommonOptions }
 type logoutOptions struct{ CommonOptions }
-type profileOptions struct{ CommonOptions }
+type profileOptions struct {
+	CommonOptions
+	Full    bool
+	Section string
+}
+
+func bindProfile(fs *flag.FlagSet, options any) {
+	opts := options.(*profileOptions)
+	fs.BoolVar(&opts.Full, "full", false, "查询完整学生信息")
+	fs.StringVar(&opts.Section, "section", "", "查询个人信息分区："+strings.Join(jwgl.ProfileSectionNames(), " / "))
+}
 
 func runLogin(ctx context.Context, app *App, _ any) error {
 	reused := false
@@ -93,17 +105,25 @@ func runLogin(ctx context.Context, app *App, _ any) error {
 		if !app.InTTY {
 			return domain.ConfigError("交互式输入学号与密码需要交互式终端，但当前 stdin 不是终端。请在配置文件中配置 USTS_USERNAME/USTS_PASSWORD，或设置 USTS_COOKIES 后重试")
 		}
-		var err error
-		username, err = PromptLine(app, "请输入学号: ")
-		if err != nil {
-			return err
+		for strings.TrimSpace(username) == "" {
+			value, err := PromptLine(app, "请输入学号: ")
+			if err != nil {
+				return err
+			}
+			username = strings.TrimSpace(value)
+			if username == "" {
+				fmt.Fprintln(app.Err, app.Warning("学号不能为空"))
+			}
 		}
-		password, err = PromptPassword(app, "请输入密码: ")
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(username) == "" || password == "" {
-			return domain.ConfigError("学号和密码不能为空")
+		for password == "" {
+			value, err := PromptPassword(app, "请输入密码: ")
+			if err != nil {
+				return err
+			}
+			password = value
+			if password == "" {
+				fmt.Fprintln(app.Err, app.Warning("密码不能为空"))
+			}
 		}
 	}
 
@@ -121,6 +141,12 @@ func runLogin(ctx context.Context, app *App, _ any) error {
 }
 
 func recoveryError(recovery domain.RecoveryResult) error {
+	if recovery.ErrorCode != "" && recovery.ErrorCode != domain.CodeAuthentication {
+		return &domain.AppError{
+			Code: recovery.ErrorCode, Message: valueOr(recovery.Message, "自动重新登录失败"),
+			Retryable: recovery.Retryable,
+		}
+	}
 	switch recovery.Reason {
 	case domain.RecoveryCredentials:
 		return domain.NewError(domain.CodeAuthentication, "会话已失效，且未配置 USTS_USERNAME/USTS_PASSWORD 无法自动重新登录。请运行 usts login，或在配置文件中配置账号密码")
@@ -147,8 +173,56 @@ func runLogout(_ context.Context, app *App, _ any) error {
 
 func runProfile(ctx context.Context, app *App, options any) error {
 	opts := options.(*profileOptions)
+	if opts.Full && opts.Section != "" {
+		return domain.ConfigError("--full 与 --section 不能同时使用")
+	}
 	if err := app.EnsureSession(ctx); err != nil {
 		return err
+	}
+	if opts.Full {
+		profile, err := app.Client.QueryRichProfile(ctx)
+		if err != nil {
+			return err
+		}
+		if opts.JSON {
+			return WriteEnvelope(app.Out, "profile", profile, nil)
+		}
+		renderRichProfile(app, profile)
+		return nil
+	}
+	if opts.Section != "" {
+		if opts.Section == jwgl.ProfileSectionSelectionStatus {
+			termValue, err := app.Term(opts.XNM, opts.XQM)
+			if err != nil {
+				return err
+			}
+			status, err := app.Client.QuerySelectionStatus(ctx, termValue.AcademicYear, termValue.Semester)
+			if err != nil {
+				return err
+			}
+			if opts.JSON {
+				return WriteEnvelope(app.Out, "profile", status, map[string]any{
+					"xnm": termValue.AcademicYear, "xqm": termValue.Semester, "section": opts.Section,
+				})
+			}
+			renderSelectionStatus(app, status)
+			return nil
+		}
+		termValue, err := app.Term(opts.XNM, opts.XQM)
+		if err != nil {
+			return err
+		}
+		section, err := app.Client.QueryProfileSection(ctx, opts.Section, termValue.AcademicYear, termValue.Semester)
+		if err != nil {
+			return err
+		}
+		if opts.JSON {
+			return WriteEnvelope(app.Out, "profile", section, map[string]any{
+				"xnm": termValue.AcademicYear, "xqm": termValue.Semester,
+			})
+		}
+		renderTableResult(app, section)
+		return nil
 	}
 	profile, err := app.Client.QueryProfile(ctx)
 	if err != nil {

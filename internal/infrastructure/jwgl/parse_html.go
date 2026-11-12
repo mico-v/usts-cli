@@ -8,6 +8,12 @@ import (
 	"golang.org/x/net/html"
 )
 
+const (
+	maxHTMLBytes = 8 * 1024 * 1024
+	maxHTMLNodes = 250_000
+	maxHTMLDepth = 512
+)
+
 type parsedOption struct {
 	Value    string
 	Label    string
@@ -15,8 +21,8 @@ type parsedOption struct {
 }
 
 func ParseSelect(source, name string) []parsedOption {
-	root, err := html.Parse(strings.NewReader(source))
-	if err != nil {
+	root := parseHTMLDocument(source)
+	if root == nil {
 		return nil
 	}
 	var selected *html.Node
@@ -172,8 +178,8 @@ func ParseProfilePage(source, username string) domain.ProfileInfo {
 }
 
 func ParseWarningPage(source string) domain.WarningStatus {
-	root, err := html.Parse(strings.NewReader(source))
-	if err != nil {
+	root := parseHTMLDocument(source)
+	if root == nil {
 		return domain.WarningStatus{}
 	}
 	messages := make([]string, 0)
@@ -262,4 +268,36 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func parseHTMLDocument(source string) *html.Node {
+	if len(source) == 0 || len(source) > maxHTMLBytes {
+		return nil
+	}
+	root, err := html.Parse(strings.NewReader(source))
+	if err != nil || !boundedHTMLTree(root) {
+		return nil
+	}
+	return root
+}
+
+func boundedHTMLTree(root *html.Node) bool {
+	type item struct {
+		node  *html.Node
+		depth int
+	}
+	stack := []item{{node: root}}
+	nodes := 0
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		nodes++
+		if nodes > maxHTMLNodes || current.depth > maxHTMLDepth {
+			return false
+		}
+		for child := current.node.FirstChild; child != nil; child = child.NextSibling {
+			stack = append(stack, item{node: child, depth: current.depth + 1})
+		}
+	}
+	return true
 }

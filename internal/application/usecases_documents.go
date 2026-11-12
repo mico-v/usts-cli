@@ -11,7 +11,7 @@ const DefaultAcademiaPDFName = "transcript.pdf"
 
 type DocumentStore interface {
 	Exists(path string) bool
-	Write(path string, data []byte) (string, error)
+	Write(path string, data []byte, force bool) (string, error)
 }
 
 func DefaultSchedulePDFName(xnm, xqm string) string {
@@ -38,7 +38,7 @@ func SaveSchedulePDF(
 	if err != nil {
 		return "", err
 	}
-	return store.Write(output, bytes)
+	return store.Write(output, bytes, force)
 }
 
 func SaveAcademiaPDF(
@@ -58,5 +58,5 @@ func SaveAcademiaPDF(
 	if err != nil {
 		return "", err
 	}
-	return store.Write(output, bytes)
+	return store.Write(output, bytes, force)
 }

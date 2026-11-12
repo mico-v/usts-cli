@@ -28,6 +28,9 @@ func (c *Client) GetPlanOptions(ctx context.Context) (domain.CascadeOptions, err
 			return err
 		}
 		options = ParseCascadeOptions(string(response.Body), "jg_id", "nj_cx", "zyh_id_cx")
+		if len(options.Colleges) == 0 && len(options.Grades) == 0 && len(options.Majors) == 0 {
+			return AmbiguousRejection("执行计划选单解析", string(response.Body))
+		}
 		return nil
 	})
 	return options, err

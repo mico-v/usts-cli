@@ -46,6 +46,12 @@ func (a *App) EnsureSession(ctx context.Context) error {
 	if state == domain.SessionMissing {
 		message = "未找到会话，请先运行 usts login 登录"
 	} else if recovery, ok := a.Client.LastRecovery(); ok {
+		if recovery.ErrorCode != "" && recovery.ErrorCode != domain.CodeAuthentication {
+			return &domain.AppError{
+				Code: recovery.ErrorCode, Message: valueOr(recovery.Message, "会话恢复失败"),
+				Retryable: recovery.Retryable,
+			}
+		}
 		switch recovery.Reason {
 		case domain.RecoveryCredentials:
 			message = "会话已失效，且未配置 USTS_USERNAME/USTS_PASSWORD 无法自动重新登录。请运行 usts login，或在配置文件中配置账号密码"
@@ -65,7 +71,7 @@ func (a *App) ReportError(err error, jsonMode bool, command string) {
 			Code: domain.CodeUnknown, Message: domain.ErrorMessage(err, "操作失败"), Cause: err,
 		}
 	}
-	message := SanitizeTerminalText(RedactSecret(domain.ErrorMessage(appError, "操作失败")))
+	message := SanitizeLine(RedactSecret(domain.ErrorMessage(appError, "操作失败")))
 	if jsonMode {
 		_ = WriteJSON(a.Err, JSONErrorEnvelope{
 			SchemaVersion: 1, Command: command,
@@ -77,23 +83,23 @@ func (a *App) ReportError(err error, jsonMode bool, command string) {
 }
 
 func (a *App) Header(text string) string {
-	return a.color("\n→ "+SanitizeTerminalText(text), "bold", true)
+	return a.color("\n→ "+SanitizeLine(text), "bold", true)
 }
 
 func (a *App) Success(text string) string {
-	return a.color("✓ "+SanitizeTerminalText(text), "green", true)
+	return a.color("✓ "+SanitizeLine(text), "green", true)
 }
 
 func (a *App) Info(text string) string {
-	return a.color("ℹ "+SanitizeTerminalText(text), "cyan", true)
+	return a.color("ℹ "+SanitizeLine(text), "cyan", true)
 }
 
 func (a *App) Warning(text string) string {
-	return a.color("⚠ "+SanitizeTerminalText(text), "yellow", false)
+	return a.color("⚠ "+SanitizeLine(text), "yellow", false)
 }
 
 func (a *App) ErrorText(text string) string {
-	return a.color("✗ "+SanitizeTerminalText(text), "red", false)
+	return a.color("✗ "+SanitizeLine(text), "red", false)
 }
 
 func (a *App) color(text, color string, stdout bool) string {

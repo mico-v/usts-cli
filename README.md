@@ -34,6 +34,10 @@ usts                          # 不带参数进入交互式菜单
 | `usts schedule` | 个人课表 |
 | `usts clsched` | 班级课表（任意班级，可级联选择） |
 | `usts profile` | 个人信息 |
+| `usts profile --full` / `--section <分区>` | 完整学籍信息与个人信息子页签 |
+| `usts course --id <课程号>` | 课程基本信息 |
+| `usts bysj` | 毕业设计成绩 |
+| `usts lookup --kind <类型>` | 公共字典与级联选项 |
 | `usts gpa` / `usts academia` | 学业成绩概览 / 学业情况与课程分类 |
 | `usts notifications` | 通知与待办 |
 | `usts selected-courses` | 已选课程详情 |
@@ -44,7 +48,7 @@ usts                          # 不带参数进入交互式菜单
 | `usts minor-schedule` | 微专业 / 辅修 / 二学位课表 |
 | `usts schedule-pdf` / `usts academia-pdf` | 下载课表 PDF / 成绩总表 PDF |
 
-`scores` / `exams` / `courses` / `schedule` / `clsched` 等支持 `-y`（学年）与 `-t`（学期）参数，缺省按当前日期推算。
+`scores` / `exams` / `courses` / `schedule` / `clsched` 等支持 `-y`（学年）与 `-t`（学期）参数，缺省按当前日期推算。`scores --detail` 查询成绩分项，`exams --unplanned` 查询未排考课程，`courses --details` 展示学生名单明细。
 
 ## 详细文档
 
@@ -84,12 +88,13 @@ node dist/index.js --help
 
 ### Go 重写分支
 
-`rewrite/go` 分支包含并行的 Go 实现（Go 1.23+），当前不替换 npm 发布入口：
+`rewrite/go` 分支包含并行的 Go 实现（Go 1.26+），当前不替换 npm 发布入口：
 
 ```bash
 make build         # 生成 bin/usts
 make test
 make race
+make vuln
 make check         # go vet + go test
 bin/usts --help
 ```
@@ -97,6 +102,7 @@ bin/usts --help
 Go 版架构见 [docs/go-architecture.md](docs/go-architecture.md)，重写决策见
 [ADR-0008](docs/adr/0008-go-rewrite.md)，验证记录见 [docs/validation.md](docs/validation.md)。
 交互菜单支持方向键、首尾循环、数字键跳选、PgUp/PgDn、Home/End 和滚动视口。
+正式 Go 制品通过 `go-v*` tag 发布到 GitHub Releases（Linux/macOS/Windows，含 SHA256）。
 
 ## 许可
 

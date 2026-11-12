@@ -52,8 +52,12 @@ func (c *Client) ProbeSession(ctx context.Context) domain.SessionState {
 	if err != nil {
 		return domain.SessionUnknown
 	}
-	if ClassifyResponse(response) == VerdictSessionExpired {
+	switch ClassifyResponse(response) {
+	case VerdictSessionExpired:
 		return domain.SessionExpired
+	case VerdictOK:
+	default:
+		return domain.SessionUnknown
 	}
 	data, err := ParseJSON(response.Body)
 	if err != nil {
@@ -63,10 +67,9 @@ func (c *Client) ProbeSession(ctx context.Context) domain.SessionState {
 	if !ok {
 		return domain.SessionUnknown
 	}
-	if _, ok := object["items"]; ok {
-		return domain.SessionValid
-	}
-	if _, ok := object["totalCount"]; ok {
+	_, itemsOK := object["items"].([]any)
+	_, totalOK := object["totalCount"]
+	if itemsOK && totalOK {
 		return domain.SessionValid
 	}
 	return domain.SessionUnknown
@@ -128,7 +131,7 @@ func (c *Client) loginViaScript(ctx context.Context, username, password string) 
 		return c.transport.Do(ctx, httpclient.Request{
 			Method: http.MethodPost,
 			Target: fmt.Sprintf("%s?time=%d", loginPath, time.Now().UnixMilli()),
-			Body:   []byte(form.Encode()), Header: headers, Effect: httpclient.EffectAuth,
+			Body:   []byte(form.Encode()), Header: headers, Effect: httpclient.EffectMutation,
 		})
 	}
 

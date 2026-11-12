@@ -1,0 +1,92 @@
+name: Release Go CLI
+
+on:
+  push:
+    tags:
+      - 'go-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: make check
+      - run: go test -race -shuffle=on -count=1 ./...
+      - run: make vuln
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Build binary
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#go-v}"
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            version="dev-${GITHUB_SHA::12}"
+          fi
+          suffix=""
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then suffix=".exe"; fi
+          mkdir -p dist
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build -trimpath -ldflags "-s -w -X main.version=$version" \
+            -o "dist/usts-${{ matrix.goos }}-${{ matrix.goarch }}${suffix}" ./cmd/usts
+      - name: Archive and checksum
+        shell: bash
+        run: |
+          cd dist
+          binary=$(find . -maxdepth 1 -type f -name 'usts-*' | head -1)
+          base=$(basename "$binary")
+          if [[ "$base" == *.exe ]]; then
+            zip "${base%.exe}.zip" "$base"
+            archive="${base%.exe}.zip"
+          else
+            tar -czf "${base}.tar.gz" "$base"
+            archive="${base}.tar.gz"
+          fi
+          sha256sum "$archive" > "$archive.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: usts-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+
+  publish:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/go-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

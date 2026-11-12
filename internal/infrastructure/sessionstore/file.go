@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 
 	"github.com/mico-v/usts-cli/internal/domain"
+	"github.com/mico-v/usts-cli/internal/infrastructure/atomicfile"
 	"github.com/mico-v/usts-cli/internal/infrastructure/httpclient"
 )
 
@@ -38,6 +38,14 @@ func New(path string) *FileStore {
 }
 
 func (s *FileStore) Load() (*PersistedSession, error) {
+	unlock, err := acquireStoreLock(s.Path)
+	if err != nil {
+		if _, statErr := os.Stat(s.Path); statErr != nil {
+			return nil, nil
+		}
+	} else {
+		defer unlock()
+	}
 	info, err := os.Lstat(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -46,6 +54,9 @@ func (s *FileStore) Load() (*PersistedSession, error) {
 		return nil, nil
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maxSessionBytes {
+		return nil, nil
+	}
+	if !secureSessionFile(info) {
 		return nil, nil
 	}
 	data, err := os.ReadFile(s.Path)
@@ -64,10 +75,17 @@ func (s *FileStore) Load() (*PersistedSession, error) {
 
 func (s *FileStore) Save(session PersistedSession) error {
 	directory := filepath.Dir(s.Path)
+	if info, statErr := os.Lstat(directory); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return domain.NewError(domain.CodeFileSystem, "拒绝向符号链接目录保存会话："+directory)
+	}
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return domain.WrapError(domain.CodeFileSystem, "无法创建会话目录："+directory, err)
 	}
-	_ = os.Chmod(directory, 0o700)
+	unlock, err := acquireStoreLock(s.Path)
+	if err != nil {
+		return domain.WrapError(domain.CodeFileSystem, "无法锁定会话存储", err)
+	}
+	defer unlock()
 	data, err := json.MarshalIndent(session, "", "  ")
 	if err != nil {
 		return domain.WrapError(domain.CodeFileSystem, "无法序列化会话", err)
@@ -93,7 +111,7 @@ func (s *FileStore) Save(session PersistedSession) error {
 		_ = os.Remove(temp)
 		return domain.WrapError(domain.CodeFileSystem, "无法安全保存会话："+s.Path, err)
 	}
-	if err := replaceFile(temp, s.Path); err != nil {
+	if err := atomicfile.Replace(temp, s.Path); err != nil {
 		_ = os.Remove(temp)
 		return domain.WrapError(domain.CodeFileSystem, "无法安全保存会话："+s.Path, err)
 	}
@@ -101,20 +119,16 @@ func (s *FileStore) Save(session PersistedSession) error {
 	return nil
 }
 
-func replaceFile(temp, destination string) error {
-	if err := os.Rename(temp, destination); err == nil {
-		return nil
-	} else if runtime.GOOS != "windows" {
-		return err
-	}
-	if err := os.Remove(destination); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return os.Rename(temp, destination)
-}
-
 func (s *FileStore) Remove() (bool, error) {
-	err := os.Remove(s.Path)
+	unlock, err := acquireStoreLock(s.Path)
+	if err != nil {
+		if _, statErr := os.Stat(filepath.Dir(s.Path)); errors.Is(statErr, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, domain.WrapError(domain.CodeFileSystem, "无法锁定会话存储", err)
+	}
+	defer unlock()
+	err = os.Remove(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}

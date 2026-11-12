@@ -28,7 +28,7 @@ func (c *Client) DownloadSchedulePDF(ctx context.Context, xnm, xqm, name string)
 	err := c.withReauth(ctx, httpclient.EffectDownload, func() error {
 		body := buildSchedulePDFBody(xnm, xqm, name)
 		policy, err := c.transport.PostForm(ctx, schedulePDFPolicyPath+"?gnmkdm=N2151", body,
-			c.transport.BaseURL()+schedulePDFPolicyPath, httpclient.EffectDownload)
+			c.transport.BaseURL()+schedulePDFPolicyPath, httpclient.EffectDownloadMutation)
 		if err != nil {
 			return err
 		}
@@ -36,7 +36,7 @@ func (c *Client) DownloadSchedulePDF(ctx context.Context, xnm, xqm, name string)
 			return err
 		}
 		file, err := c.transport.PostForm(ctx, schedulePDFFilePath+"?doType=table", body,
-			c.transport.BaseURL()+schedulePDFFilePath, httpclient.EffectDownload)
+			c.transport.BaseURL()+schedulePDFFilePath, httpclient.EffectDownloadMutation)
 		if err != nil {
 			return err
 		}
@@ -108,7 +108,7 @@ func (c *Client) DownloadAcademiaPDF(ctx context.Context) ([]byte, error) {
 
 func (c *Client) postPDFStep(ctx context.Context, path string, form url.Values) (*httpclient.Response, error) {
 	response, err := c.transport.PostForm(ctx, path+"?gnmkdm=N558020", form,
-		c.transport.BaseURL()+path, httpclient.EffectDownload)
+		c.transport.BaseURL()+path, httpclient.EffectDownloadMutation)
 	if err != nil {
 		return nil, err
 	}

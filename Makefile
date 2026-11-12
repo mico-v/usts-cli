@@ -1,4 +1,4 @@
-.PHONY: build test race vet fmt check clean
+.PHONY: build test race vet vuln fmt check clean
 
 BIN := bin/usts
 
@@ -13,6 +13,9 @@ race:
 
 vet:
 	go vet ./...
+
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 fmt:
 	gofmt -w cmd internal

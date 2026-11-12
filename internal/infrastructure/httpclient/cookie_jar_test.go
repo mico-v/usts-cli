@@ -36,6 +36,19 @@ func TestCookieJarImportAndRestore(t *testing.T) {
 	}
 }
 
+func TestCookieJarExpirationOnlyDeletesMatchingPath(t *testing.T) {
+	jar := NewCookieJar("https://jwgl.usts.edu.cn/")
+	jar.SetCookie("sid=foo; Path=/foo", "https://jwgl.usts.edu.cn/foo/a")
+	jar.SetCookie("sid=bar; Path=/bar", "https://jwgl.usts.edu.cn/bar/a")
+	jar.SetCookie("sid=; Path=/foo; Max-Age=0", "https://jwgl.usts.edu.cn/foo/a")
+	if got := jar.Header("https://jwgl.usts.edu.cn/foo/a"); got != "" {
+		t.Fatalf("/foo cookie still present: %q", got)
+	}
+	if got := jar.Header("https://jwgl.usts.edu.cn/bar/a"); got != "sid=bar" {
+		t.Fatalf("/bar cookie was deleted: %q", got)
+	}
+}
+
 func jsonMarshal(value any) ([]byte, error) {
 	return json.Marshal(value)
 }

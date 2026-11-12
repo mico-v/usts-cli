@@ -3,7 +3,9 @@ package jwgl
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"html"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,6 +34,13 @@ func ParseJSON(data []byte) (any, error) {
 	if err := decoder.Decode(&value); err != nil {
 		return nil, domain.WrapError(domain.CodeProtocolChanged, "响应不是有效 JSON", err)
 	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, domain.NewError(domain.CodeProtocolChanged, "响应包含多个 JSON 值")
+		}
+		return nil, domain.WrapError(domain.CodeProtocolChanged, "响应 JSON 后包含非空尾随内容", err)
+	}
 	return value, nil
 }
 
@@ -47,6 +56,22 @@ func RecordArray(value any) []RawRecord {
 		}
 	}
 	return records
+}
+
+func RecordArrayStrict(value any) ([]RawRecord, error) {
+	array, ok := value.([]any)
+	if !ok {
+		return nil, domain.NewError(domain.CodeProtocolChanged, "响应 items 不是数组")
+	}
+	records := make([]RawRecord, 0, len(array))
+	for index, item := range array {
+		record, ok := item.(map[string]any)
+		if !ok {
+			return nil, domain.NewError(domain.CodeProtocolChanged, fmt.Sprintf("响应 items[%d] 不是对象", index))
+		}
+		records = append(records, RawRecord(record))
+	}
+	return records, nil
 }
 
 func StringValue(record RawRecord, keys ...string) string {

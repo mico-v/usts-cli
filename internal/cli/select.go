@@ -163,7 +163,10 @@ func clearSelectBlock(app *App, lines int) {
 }
 
 func selectVisibleRows(terminalHeight, total int) int {
-	rows := terminalHeight - 5
+	rows := 7
+	if available := terminalHeight - 5; available < rows {
+		rows = available
+	}
 	if rows < 1 {
 		rows = 1
 	}

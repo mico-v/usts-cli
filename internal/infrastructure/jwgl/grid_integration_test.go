@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/mico-v/usts-cli/internal/infrastructure/httpclient"
@@ -59,6 +60,39 @@ func TestClientQueryScoresHandlesTextHTMLJSONAndGridContract(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].CourseName != "高等数学" || items[0].Credit == nil || *items[0].Credit != 4 {
 		t.Fatalf("unexpected items: %#v", items)
+	}
+}
+
+func TestPostGridContinuesWhenServerPageIsSmallerThanRequested(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Error(err)
+			return
+		}
+		page, _ := strconv.Atoi(request.Form.Get("queryModel.currentPage"))
+		start := (page - 1) * 100
+		items := make([]map[string]any, 0, 100)
+		for index := start; index < start+100; index++ {
+			items = append(items, map[string]any{"kcmc": "课程" + strconv.Itoa(index), "kch": strconv.Itoa(index)})
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"items": items, "totalCount": 200})
+	}))
+	defer server.Close()
+
+	transport, err := httpclient.NewTransport(server.URL+"/jwglxt", httpclient.TransportOptions{
+		Launch: map[string]string{
+			"USTS_ALLOW_CUSTOM_HOST": "1", "USTS_ALLOW_INSECURE_HTTP": "1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := PostGrid(context.Background(), transport, "/test/grid.html", "N1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 200 {
+		t.Fatalf("records = %d, want 200", len(records))
 	}
 }
 

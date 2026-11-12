@@ -36,6 +36,9 @@ func ReadPlan(ctx context.Context, gateway PlanGateway, query PlanQuery) (PlanVi
 	if err != nil {
 		return PlanView{}, err
 	}
+	if !query.All && scope.College == nil && scope.Grade == nil && scope.Major == nil {
+		return PlanView{}, domain.ConfigError("未能从执行计划视图页取得默认范围；请显式指定 --college/--grade/--major，或使用 --all 查询全校")
+	}
 	filter := domain.PlanFilter{}
 	if scope.College != nil {
 		filter.CollegeID = scope.College.Value

@@ -17,12 +17,23 @@ type ScoresGateway interface {
 	QueryScores(ctx context.Context, xnm, xqm string, extra map[string]string) ([]domain.ScoreItem, error)
 }
 
+type ScoreDetailGateway interface {
+	QueryScoreDetail(ctx context.Context, xnm, xqm, jxbID, courseName string) (domain.HTMLDetail, error)
+}
+
 type RecordsGateway interface {
 	QueryExams(ctx context.Context, xnm, xqm string) ([]domain.ExamItem, error)
 	QueryCourseList(ctx context.Context, xnm, xqm string) ([]domain.CourseListItem, error)
 	QueryNotifications(ctx context.Context) ([]domain.NotificationItem, error)
 	QuerySelectedCourses(ctx context.Context, xnm, xqm string) ([]domain.SelectedCourseItem, error)
 	QueryProfile(ctx context.Context) (domain.ProfileInfo, error)
+}
+
+type ProfileGateway interface {
+	QueryProfile(ctx context.Context) (domain.ProfileInfo, error)
+	QueryRichProfile(ctx context.Context) (domain.RichProfile, error)
+	QueryProfileSection(ctx context.Context, section, xnm, xqm string) (domain.TableResult, error)
+	QuerySelectionStatus(ctx context.Context, xnm, xqm string) (domain.SelectionStatus, error)
 }
 
 type ScheduleGateway interface {
@@ -51,6 +62,22 @@ type FreeClassroomGateway interface {
 
 type WarningGateway interface {
 	QueryWarning(ctx context.Context) (domain.WarningStatus, error)
+}
+
+type UnplannedExamGateway interface {
+	QueryUnplannedExams(ctx context.Context, xnm, xqm string) ([]domain.UnplannedExamItem, error)
+}
+
+type CourseInfoGateway interface {
+	QueryCourseInfo(ctx context.Context, courseCode string) (domain.HTMLDetail, error)
+}
+
+type GraduationDesignGateway interface {
+	QueryGraduationDesign(ctx context.Context, xnm, xqm string) (domain.TableResult, error)
+}
+
+type LookupGateway interface {
+	QueryLookup(ctx context.Context, kind string) (domain.TableResult, error)
 }
 
 type PlanGateway interface {

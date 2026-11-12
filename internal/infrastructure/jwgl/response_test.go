@@ -19,7 +19,8 @@ func TestClassifyResponse(t *testing.T) {
 		{"ambiguous redirect", &httpclient.Response{StatusCode: 302, Header: http.Header{"Location": []string{"/download/a.pdf"}}}, VerdictAmbiguous},
 		{"rate limited", &httpclient.Response{StatusCode: 429}, VerdictRateLimited},
 		{"server error", &httpclient.Response{StatusCode: 503}, VerdictServerError},
-		{"login body", &httpclient.Response{StatusCode: 200, Body: []byte(`请先登录`)}, VerdictSessionExpired},
+		{"permission denied", &httpclient.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/plain"}}, Body: []byte("没有访问权限!")}, VerdictPermissionDenied},
+		{"login body", &httpclient.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: []byte(`请先登录`)}, VerdictSessionExpired},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -31,7 +32,7 @@ func TestClassifyResponse(t *testing.T) {
 }
 
 func TestAssertPDFResponse(t *testing.T) {
-	valid := &httpclient.Response{StatusCode: 200, Body: []byte("%PDF-1.7 test")}
+	valid := &httpclient.Response{StatusCode: 200, Body: []byte("%PDF-1.7 test\n%%EOF")}
 	if err := AssertPDFResponse(valid); err != nil {
 		t.Fatalf("valid PDF rejected: %v", err)
 	}

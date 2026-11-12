@@ -7,6 +7,7 @@
 
 - `make check`：通过
 - `go test -race ./...`：通过
+- `govulncheck ./...`：无已知可达漏洞
 - `npm run check`：通过，原 TypeScript 191 项测试全部通过
 - Windows amd64 交叉编译：通过
 - macOS arm64 交叉编译：通过
@@ -46,6 +47,18 @@
 | 交互式主菜单 | 方向键、首尾循环、数字键跳选、Ctrl+P、PageDown、End、滚动视口、Ctrl+C 终端恢复均通过 PTY 验证 |
 | 查询菜单滚动 | 8 行终端下正确显示上下滚动提示，Ctrl+C 干净退出 |
 | 完整交互查询链路 | 主菜单进入查询、滚动选择成绩、完成三个滚动表单、真实查询 3 门课程并返回菜单 |
+| `profile --full` | 成功，30 个稳定字段 |
+| `profile --section classes` | 成功，1 条班级记录 |
+| `profile --section selection-status` | 成功，状态码 1 |
+| `scores --templates` | 成功，7 个分项模板 |
+| `scores --detail` | 成功，1 个表格、1 行成绩分项 |
+| `exams --unplanned` | 成功，5 条 |
+| `courses --details` | 成功，14 条且学生字段非空 |
+| `course --id` | 成功，4 个表格、55 条页面文本 |
+| `bysj` | 成功，当前账号合法空结果 |
+| `lookup` | 12 种语义全部成功：单位、年级、学院、专业、班级、校区、课程类别/性质/归属、教学方式、时间、节次 |
+| `selected-courses --blocks/--chosen/--credits/--evaluation-status` | 4 条辅助只读路径全部成功 |
+| 个人信息其余 8 个子页签 | 实现完成，但当前账号真实返回 `PERMISSION_DENIED`，不计为已验证可用 |
 
 ## PDF 外部限制
 
@@ -55,3 +68,5 @@
 - `academia-pdf`：Go 与 TypeScript 均返回远端错误，TypeScript 明确为 HTTP 404。
 
 两种实现表现一致，因此这不是 Go 重写回归。PDF 请求链、同源重定向、PDF 文件头校验、原子落盘和覆盖策略已由本地集成测试覆盖；真实生成能力取决于当前账号的打印模块权限与远端服务状态。
+
+完整接口矩阵见 [`interface-coverage.md`](interface-coverage.md)。

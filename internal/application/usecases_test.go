@@ -140,6 +140,13 @@ func TestEmptyPlanResultsStayEmptyArrays(t *testing.T) {
 	}
 }
 
+func TestReadPlanRejectsMissingDefaultScope(t *testing.T) {
+	_, err := ReadPlan(context.Background(), emptyPlanGateway{}, PlanQuery{})
+	if !domain.IsCode(err, domain.CodeConfiguration) {
+		t.Fatalf("ReadPlan() error = %v, want configuration error", err)
+	}
+}
+
 func TestEmptyFreeClassroomResultHasEmptyCriteriaArrays(t *testing.T) {
 	view, err := ReadFreeClassrooms(context.Background(), fakeFreeClassGateway{}, FreeClassroomsQuery{XNM: "2026", XQM: "3"})
 	if err != nil {

@@ -14,21 +14,25 @@ func mapScoreItem(item RawRecord) (domain.ScoreItem, error) {
 		return domain.ScoreItem{}, err
 	}
 	return domain.ScoreItem{
-		CourseName:    StringValue(item, "kcmc"),
-		CourseCode:    StringValue(item, "kch"),
-		CourseNature:  StringValue(item, "kcxzmc"),
-		Credit:        NumberValue(item, "xf"),
-		Score:         StringValue(item, "cj"),
-		GPA:           NumberValue(item, "jd"),
-		College:       StringValue(item, "jgmc"),
-		Teacher:       StringValue(item, "jsxm"),
-		AssessMethod:  StringValue(item, "khfsmc"),
-		ExamType:      StringValue(item, "ksxz"),
-		AcademicYear:  StringValue(item, "xnmmc"),
-		Semester:      StringValue(item, "xqmmc"),
-		ClassName:     StringValue(item, "bj"),
-		Major:         StringValue(item, "zymc"),
-		TeachingClass: StringValue(item, "jxbmc"),
+		CourseName:       StringValue(item, "kcmc"),
+		CourseCode:       StringValue(item, "kch"),
+		CourseNature:     StringValue(item, "kcxzmc"),
+		Credit:           NumberValue(item, "xf"),
+		Score:            StringValue(item, "cj"),
+		GPA:              NumberValue(item, "jd"),
+		College:          StringValue(item, "jgmc"),
+		Teacher:          StringValue(item, "jsxm"),
+		AssessMethod:     StringValue(item, "khfsmc"),
+		ExamType:         StringValue(item, "ksxz"),
+		AcademicYear:     StringValue(item, "xnmmc"),
+		Semester:         StringValue(item, "xqmmc"),
+		ClassName:        StringValue(item, "bj"),
+		Major:            StringValue(item, "zymc"),
+		TeachingClass:    StringValue(item, "jxbmc"),
+		TeachingClassID:  OptionalString(item, "jxb_id"),
+		StudentID:        OptionalString(item, "xh_id", "xh"),
+		AcademicYearCode: OptionalString(item, "xnm"),
+		SemesterCode:     OptionalString(item, "xqm"),
 	}, nil
 }
 
@@ -89,16 +93,53 @@ func mapExamItem(item RawRecord) (domain.ExamItem, error) {
 	}, nil
 }
 
+func mapUnplannedExamItem(item RawRecord) (domain.UnplannedExamItem, error) {
+	if err := AssertAnyField(item, []string{"kcmc", "kch"}, "未排考课程条目"); err != nil {
+		return domain.UnplannedExamItem{}, err
+	}
+	return domain.UnplannedExamItem{
+		CourseName:    StringValue(item, "kcmc"),
+		CourseCode:    StringValue(item, "kch"),
+		ExamName:      OptionalString(item, "ksmc"),
+		TeachingClass: OptionalString(item, "jxbmc"),
+		Teacher:       OptionalString(item, "jsxx"),
+		College:       OptionalString(item, "kkxy"),
+		Credit:        NumberValue(item, "xf"),
+		StudentID:     OptionalString(item, "xh"),
+		StudentName:   OptionalString(item, "xm"),
+		ClassName:     OptionalString(item, "bj"),
+		Grade:         OptionalString(item, "njmc"),
+		Major:         OptionalString(item, "zymc"),
+		AcademicYear:  OptionalString(item, "xnmc"),
+		Semester:      OptionalString(item, "xqmmc"),
+		Process:       OptionalString(item, "lcjjs"),
+	}, nil
+}
+
 func mapCourseListItem(item RawRecord) (domain.CourseListItem, error) {
 	if err := AssertAnyField(item, []string{"kcmc", "kchmc"}, "选课名单条目"); err != nil {
 		return domain.CourseListItem{}, err
 	}
 	return domain.CourseListItem{
-		CourseName:    firstNonEmpty(StringValue(item, "kcmc"), StringValue(item, "kchmc")),
-		CourseCode:    firstNonEmpty(StringValue(item, "kch"), StringValue(item, "kcbh"), StringValue(item, "kcdm")),
-		Credit:        StringValue(item, "xf"),
-		Teacher:       firstNonEmpty(StringValue(item, "jsmc"), StringValue(item, "jsxx"), StringValue(item, "jsxm"), StringValue(item, "rkjs")),
-		TeachingClass: firstNonEmpty(StringValue(item, "jxbmc"), StringValue(item, "jxbdm"), StringValue(item, "xkb")),
+		CourseName:     firstNonEmpty(StringValue(item, "kcmc"), StringValue(item, "kchmc")),
+		CourseCode:     firstNonEmpty(StringValue(item, "kch"), StringValue(item, "kcbh"), StringValue(item, "kcdm")),
+		Credit:         StringValue(item, "xf"),
+		Teacher:        firstNonEmpty(StringValue(item, "jsmc"), StringValue(item, "jsxx"), StringValue(item, "jsxm"), StringValue(item, "rkjs")),
+		TeachingClass:  firstNonEmpty(StringValue(item, "jxbmc"), StringValue(item, "jxbdm"), StringValue(item, "xkb")),
+		StudentID:      OptionalString(item, "xh"),
+		StudentName:    OptionalString(item, "xm"),
+		ClassName:      OptionalString(item, "bj", "bjmc"),
+		Major:          OptionalString(item, "zymc"),
+		Grade:          OptionalString(item, "njmc"),
+		College:        OptionalString(item, "jgmc", "kkxymc"),
+		Campus:         OptionalString(item, "xqmc"),
+		CourseNature:   OptionalString(item, "kcxzmc"),
+		CourseCategory: OptionalString(item, "kclbmc"),
+		TeachingTime:   OptionalString(item, "sksj"),
+		TeachingPlace:  OptionalString(item, "jxdd"),
+		Status:         OptionalString(item, "xjztmc"),
+		Registered:     BoolValue(item, "sfzx"),
+		Paid:           BoolValue(item, "sfjf"),
 	}, nil
 }
 
@@ -116,16 +157,18 @@ func mapSelectedCourseItem(item RawRecord) (domain.SelectedCourseItem, error) {
 	place := CleanHTML(StringValue(item, "jxdd"))
 	timeText := CleanHTML(StringValue(item, "sksj"))
 	return domain.SelectedCourseItem{
-		CourseID:       OptionalString(item, "kch_id", "kch"),
-		ClassID:        OptionalString(item, "jxb_id", "jxbid"),
-		Title:          OptionalString(item, "kcmc", "kchmc"),
-		Teacher:        teacher,
-		Credit:         NumberValue(item, "xf"),
-		Category:       OptionalString(item, "kklxmc", "kclbmc"),
-		Capacity:       NumberValue(item, "jxbrs"),
-		SelectedNumber: NumberValue(item, "yxzrs"),
-		Place:          optionalText(place),
-		Time:           optionalText(timeText),
+		CourseID:         OptionalString(item, "kch_id", "kch"),
+		ClassID:          OptionalString(item, "jxb_id", "jxbid"),
+		Title:            OptionalString(item, "kcmc", "kchmc"),
+		Teacher:          teacher,
+		Credit:           NumberValue(item, "xf"),
+		Category:         OptionalString(item, "kklxmc", "kclbmc"),
+		Capacity:         NumberValue(item, "jxbrs"),
+		SelectedNumber:   NumberValue(item, "yxzrs"),
+		Place:            optionalText(place),
+		Time:             optionalText(timeText),
+		CategoryCode:     OptionalString(item, "kklxdm"),
+		SelectionBlockID: OptionalString(item, "xkkz_id"),
 	}, nil
 }
 
@@ -230,6 +273,44 @@ func mapMinorScheduleEntry(item RawRecord) (domain.MinorScheduleEntry, error) {
 		Grade:   OptionalString(item, "njmc"),
 		Major:   OptionalString(item, "zymc"),
 		Name:    OptionalString(item, "tjkbmc"),
+	}, nil
+}
+
+func mapRichProfile(record RawRecord) (domain.RichProfile, error) {
+	if err := AssertAnyField(record, []string{"xh", "xm"}, "学生信息富查询"); err != nil {
+		return domain.RichProfile{}, err
+	}
+	return domain.RichProfile{
+		StudentID:          StringValue(record, "xh"),
+		InternalID:         StringValue(record, "xh_id"),
+		DisplayName:        StringValue(record, "xm"),
+		NamePinyin:         OptionalString(record, "xmpy"),
+		GenderCode:         OptionalString(record, "xbm"),
+		Nationality:        OptionalString(record, "mzm"),
+		BirthDate:          OptionalString(record, "csrq"),
+		IDType:             OptionalString(record, "zjlxm"),
+		IDCard:             OptionalString(record, "zjhm"),
+		Phone:              OptionalString(record, "sjhm"),
+		Email:              OptionalString(record, "dzyx", "email"),
+		Address:            OptionalString(record, "jtdz"),
+		HomePlace:          OptionalString(record, "jtszd"),
+		PostalCode:         OptionalString(record, "yzbm"),
+		PoliticalStatus:    OptionalString(record, "zzmmm"),
+		EnrollmentDate:     OptionalString(record, "rxrq"),
+		StudentStatus:      OptionalString(record, "xjztdm"),
+		ClassID:            OptionalString(record, "bh_id"),
+		CollegeID:          OptionalString(record, "jg_id"),
+		CollegeName:        OptionalString(record, "jg"),
+		MajorID:            OptionalString(record, "zyh_id"),
+		GradeID:            OptionalString(record, "njdm_id"),
+		TrainingLevel:      OptionalString(record, "pyccdm"),
+		StudyForm:          OptionalString(record, "pyfsdm"),
+		StudyLength:        OptionalString(record, "xz"),
+		ExpectedGraduation: OptionalString(record, "byzx"),
+		CandidateNumber:    OptionalString(record, "ksh"),
+		CandidateCategory:  OptionalString(record, "kslbm"),
+		StudentSource:      OptionalString(record, "syd"),
+		HasPhoto:           BoolValue(record, "has_xszp"),
 	}, nil
 }
 

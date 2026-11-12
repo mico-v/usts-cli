@@ -42,12 +42,19 @@ internal/infrastructure/jwgl
   *_page/parse_html.go     纯 HTML 解析
   mappers.go               远端字段 -> 领域模型
   records/schedule/...     按业务域拆分的端点适配器
+  details.go               成绩分项、课程信息、未排考、毕设
+  profile_sections.go      个人信息富查询与子页签
+  selected_details.go      已选课程辅助只读接口
+  lookup.go                公共字典/级联端点
 
 internal/infrastructure/sessionstore
   file.go                  origin 绑定、0600、原子写
 
 internal/infrastructure/documentstore
   file.go                  PDF 原子落盘
+
+internal/infrastructure/atomicfile
+  replace_*.go             Unix rename / Windows MoveFileEx 原子替换
 
 internal/cli
   registry.go              命令注册表与统一 flag 解析
@@ -105,7 +112,7 @@ CLI
 |---:|---|
 | 0 | 成功 |
 | 2 | `CONFIGURATION_ERROR` |
-| 3 | `AUTHENTICATION_REQUIRED` / `SESSION_EXPIRED` / `INVALID_CREDENTIALS` / `CAPTCHA_REQUIRED` |
+| 3 | `AUTHENTICATION_REQUIRED` / `SESSION_EXPIRED` / `INVALID_CREDENTIALS` / `CAPTCHA_REQUIRED` / `PERMISSION_DENIED` |
 | 4 | `RATE_LIMITED` / `NETWORK_UNAVAILABLE` / `REQUEST_TIMEOUT` / `REMOTE_SERVER_ERROR` |
 | 5 | `PROTOCOL_CHANGED` |
 | 6 | `FILE_SYSTEM_ERROR` |

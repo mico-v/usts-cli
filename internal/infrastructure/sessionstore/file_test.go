@@ -71,3 +71,20 @@ func TestFileStoreRejectsSessionWithoutOrigin(t *testing.T) {
 		t.Fatalf("expected session without origin to be rejected: %#v", loaded)
 	}
 }
+
+func TestFileStoreRejectsWeakPermissionsOnUnix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions are not enforced on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := os.WriteFile(path, []byte(`{"schemaVersion":1,"origin":"https://jwgl.usts.edu.cn","cookies":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := New(path).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != nil {
+		t.Fatalf("expected weak-permission session to be rejected: %#v", loaded)
+	}
+}

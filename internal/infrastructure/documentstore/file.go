@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 
 	"github.com/mico-v/usts-cli/internal/domain"
+	"github.com/mico-v/usts-cli/internal/infrastructure/atomicfile"
 )
 
 type FileStore struct{}
@@ -17,7 +17,7 @@ func (FileStore) Exists(path string) bool {
 	return err == nil
 }
 
-func (FileStore) Write(path string, data []byte) (string, error) {
+func (FileStore) Write(path string, data []byte, force bool) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return "", domain.WrapError(domain.CodeFileSystem, "无法解析输出路径："+path, err)
@@ -41,22 +41,21 @@ func (FileStore) Write(path string, data []byte) (string, error) {
 		_ = os.Remove(temp)
 		return "", domain.WrapError(domain.CodeFileSystem, "无法写入文件："+absolute, err)
 	}
-	if err := replaceFile(temp, absolute); err != nil {
+	if force {
+		if err := atomicfile.Replace(temp, absolute); err != nil {
+			_ = os.Remove(temp)
+			return "", domain.WrapError(domain.CodeFileSystem, "无法写入文件："+absolute, err)
+		}
+	} else {
+		if err := os.Link(temp, absolute); err != nil {
+			_ = os.Remove(temp)
+			if os.IsExist(err) {
+				return "", domain.NewError(domain.CodeFileSystem, "目标文件已存在："+absolute+"（默认不覆盖已有文件）")
+			}
+			return "", domain.WrapError(domain.CodeFileSystem, "无法安全创建文件："+absolute, err)
+		}
 		_ = os.Remove(temp)
-		return "", domain.WrapError(domain.CodeFileSystem, "无法写入文件："+absolute, err)
 	}
 	_ = os.Chmod(absolute, 0o600)
 	return absolute, nil
-}
-
-func replaceFile(temp, destination string) error {
-	if err := os.Rename(temp, destination); err == nil {
-		return nil
-	} else if runtime.GOOS != "windows" {
-		return err
-	}
-	if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return os.Rename(temp, destination)
 }

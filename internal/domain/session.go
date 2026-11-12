@@ -28,9 +28,11 @@ const (
 )
 
 type RecoveryResult struct {
-	OK      bool
-	Reason  RecoveryReason
-	Message string
+	OK        bool
+	Reason    RecoveryReason
+	Message   string
+	ErrorCode ErrorCode
+	Retryable bool
 }
 
 type LoginData struct {

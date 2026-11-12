@@ -101,9 +101,9 @@ func (j *CookieJar) SetCookie(raw, requestURL string) bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if expiresAt > 0 && expiresAt <= now.UnixMilli() {
-		changed := j.deleteByNameLocked(stored.Domain, stored.Name)
+		_, existed := j.cookies[key]
 		delete(j.cookies, key)
-		return changed
+		return existed
 	}
 	previous, exists := j.cookies[key]
 	j.cookies[key] = stored
@@ -204,17 +204,6 @@ func (j *CookieJar) Clear() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.cookies = map[string]StoredCookie{}
-}
-
-func (j *CookieJar) deleteByNameLocked(domain, name string) bool {
-	changed := false
-	for key, cookie := range j.cookies {
-		if cookie.Domain == domain && cookie.Name == name {
-			delete(j.cookies, key)
-			changed = true
-		}
-	}
-	return changed
 }
 
 func cookieKey(cookie StoredCookie) string {

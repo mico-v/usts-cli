@@ -92,3 +92,27 @@ func TestParseAcademiaRejectsWrongPage(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestParseHTMLDetail(t *testing.T) {
+	source := `<html><body><h3>课程信息</h3>
+<table><tr><th>课程号</th><th>课程名</th></tr><tr><td>MATH01</td><td>高等数学</td></tr></table>
+<table><tr><td>成绩项</td><td>平时</td></tr><tr><td>30</td><td>90</td></tr></table>
+</body></html>`
+	detail := ParseHTMLDetail(source)
+	if detail.Title != "课程信息" || len(detail.Tables) != 2 {
+		t.Fatalf("unexpected detail: %#v", detail)
+	}
+	if len(detail.Tables[0].Headers) != 2 || len(detail.Tables[0].Rows) != 1 {
+		t.Fatalf("unexpected first table: %#v", detail.Tables[0])
+	}
+	if len(detail.Tables[1].Headers) != 2 || len(detail.Tables[1].Rows) != 1 {
+		t.Fatalf("fallback header parsing failed: %#v", detail.Tables[1])
+	}
+}
+
+func TestParseSelectRejectsExcessiveHTMLDepth(t *testing.T) {
+	source := strings.Repeat("<div>", maxHTMLDepth+2) + "<select name=\"x\"></select>"
+	if options := ParseSelect(source, "x"); options != nil {
+		t.Fatalf("expected excessive-depth HTML to be rejected: %#v", options)
+	}
+}

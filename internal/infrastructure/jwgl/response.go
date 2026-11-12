@@ -14,11 +14,12 @@ import (
 type Verdict string
 
 const (
-	VerdictOK             Verdict = "ok"
-	VerdictSessionExpired Verdict = "session-expired"
-	VerdictAmbiguous      Verdict = "ambiguous"
-	VerdictRateLimited    Verdict = "rate-limited"
-	VerdictServerError    Verdict = "server-error"
+	VerdictOK               Verdict = "ok"
+	VerdictSessionExpired   Verdict = "session-expired"
+	VerdictAmbiguous        Verdict = "ambiguous"
+	VerdictRateLimited      Verdict = "rate-limited"
+	VerdictPermissionDenied Verdict = "permission-denied"
+	VerdictServerError      Verdict = "server-error"
 )
 
 var (
@@ -49,7 +50,10 @@ func ClassifyResponse(response *httpclient.Response) Verdict {
 	if response.StatusCode >= 400 {
 		return VerdictServerError
 	}
-	if sessionMarker.Match(response.Body) {
+	if bytes.Contains(response.Body, []byte("没有访问权限")) {
+		return VerdictPermissionDenied
+	}
+	if looksLikeHTML(response) && sessionMarker.Match(response.Body) {
 		return VerdictSessionExpired
 	}
 	return VerdictOK
@@ -60,7 +64,6 @@ func AmbiguousRejection(operation string, cause any) error {
 		Code:      domain.CodeProtocolChanged,
 		Message:   fmt.Sprintf("%s失败：服务端未返回预期内容（会话可能已失效，或接口被拒/改版）", operation),
 		Ambiguous: true,
-		Details:   map[string]any{"cause": cause},
 	}
 }
 
@@ -74,6 +77,8 @@ func AssertReadableResponse(response *httpclient.Response, operation string) err
 		return AmbiguousRejection(operation, string(response.Body))
 	case VerdictRateLimited:
 		return &domain.AppError{Code: domain.CodeRateLimited, Message: "请求过于频繁，请等待 30~60 秒后重试", Retryable: true}
+	case VerdictPermissionDenied:
+		return domain.NewError(domain.CodePermissionDenied, "当前账号无权限访问该功能")
 	default:
 		return &domain.AppError{
 			Code: domain.CodeRemoteServer, Message: fmt.Sprintf("%s失败：HTTP %d", operation, response.StatusCode),
@@ -100,6 +105,16 @@ func AssertPDFResponse(response *httpclient.Response) error {
 			Retryable: response.StatusCode >= 500,
 		}
 	}
+	if bytes.HasPrefix(response.Body, []byte("%PDF-")) {
+		tail := response.Body
+		if len(tail) > 4096 {
+			tail = tail[len(tail)-4096:]
+		}
+		if !bytes.Contains(tail, []byte("%%EOF")) {
+			return domain.NewError(domain.CodeProtocolChanged, "服务端返回的 PDF 文件不完整")
+		}
+		return nil
+	}
 	prefix := response.Body
 	if len(prefix) > 4096 {
 		prefix = prefix[:4096]
@@ -107,12 +122,18 @@ func AssertPDFResponse(response *httpclient.Response) error {
 	if sessionMarker.Match(prefix) {
 		return domain.NewError(domain.CodeSessionExpired, "会话已失效，请重新运行 usts login")
 	}
-	if !bytes.HasPrefix(response.Body, []byte("%PDF-")) {
-		return domain.NewError(domain.CodeProtocolChanged, "服务端未返回有效 PDF 文件")
-	}
-	return nil
+	return domain.NewError(domain.CodeProtocolChanged, "服务端未返回有效 PDF 文件")
 }
 
 func HeaderValue(header http.Header, name string) string {
 	return strings.TrimSpace(header.Get(name))
+}
+
+func looksLikeHTML(response *httpclient.Response) bool {
+	contentType := strings.ToLower(response.Header.Get("Content-Type"))
+	if strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/xhtml") {
+		return true
+	}
+	body := bytes.TrimSpace(response.Body)
+	return len(body) > 0 && body[0] == '<'
 }

@@ -17,8 +17,28 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - run: make check
-      - run: go test -race ./...
+      - run: go test -race -shuffle=on -count=1 ./...
+      - run: make vuln
       - run: make build
+
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -trimpath -o /tmp/usts ./cmd/usts
 
   check:
     runs-on: ubuntu-latest

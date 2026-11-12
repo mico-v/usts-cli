@@ -28,10 +28,11 @@ const (
 type Effect string
 
 const (
-	EffectRead     Effect = "read"
-	EffectAuth     Effect = "auth"
-	EffectDownload Effect = "download"
-	EffectMutation Effect = "mutation"
+	EffectRead             Effect = "read"
+	EffectAuth             Effect = "auth"
+	EffectDownload         Effect = "download"
+	EffectDownloadMutation Effect = "download-mutation"
+	EffectMutation         Effect = "mutation"
 )
 
 type RetryNotice struct {
@@ -149,16 +150,22 @@ func (t *Transport) FormHeaders(referer string) http.Header {
 }
 
 func (t *Transport) Get(ctx context.Context, target string, effect Effect) (*Response, error) {
+	if effect == "" {
+		effect = EffectRead
+	}
 	timeout := DefaultRequestTimeout
-	if effect == EffectDownload {
+	if effect == EffectDownload || effect == EffectDownloadMutation {
 		timeout = DownloadRequestTimeout
 	}
 	return t.Do(ctx, Request{Method: http.MethodGet, Target: target, Effect: effect, Timeout: timeout})
 }
 
 func (t *Transport) PostForm(ctx context.Context, target string, form url.Values, referer string, effect Effect) (*Response, error) {
+	if effect == "" {
+		effect = EffectMutation
+	}
 	timeout := DefaultRequestTimeout
-	if effect == EffectDownload {
+	if effect == EffectDownload || effect == EffectDownloadMutation {
 		timeout = DownloadRequestTimeout
 	}
 	return t.Do(ctx, Request{
@@ -174,7 +181,7 @@ func (t *Transport) Do(ctx context.Context, request Request) (*Response, error) 
 	}
 	effect := request.Effect
 	if effect == "" {
-		effect = EffectRead
+		effect = EffectMutation
 	}
 	policy := retryPolicy(effect)
 	timeout := request.Timeout
@@ -248,7 +255,15 @@ func (t *Transport) GetFollowingSameOrigin(ctx context.Context, target string, e
 		if location == "" {
 			return response, nil
 		}
-		next, err := config.AssertSameOrigin(location, current)
+		currentURL, err := url.Parse(current)
+		if err != nil {
+			return nil, domain.WrapError(domain.CodeProtocolChanged, "下载地址无效", err)
+		}
+		resolved, err := currentURL.Parse(location)
+		if err != nil {
+			return nil, domain.WrapError(domain.CodeProtocolChanged, "下载重定向地址无效", err)
+		}
+		next, err := config.AssertSameOrigin(resolved.String(), current)
 		if err != nil {
 			return nil, err
 		}
@@ -329,14 +344,18 @@ type retryPolicyValue struct {
 
 func retryPolicy(effect Effect) retryPolicyValue {
 	switch effect {
+	case EffectRead:
+		return retryPolicyValue{attempts: 3, retryTimeouts: true}
 	case EffectAuth:
 		return retryPolicyValue{attempts: 3, retryTimeouts: false}
 	case EffectDownload:
 		return retryPolicyValue{attempts: 2, retryTimeouts: true}
+	case EffectDownloadMutation:
+		return retryPolicyValue{attempts: 1, retryTimeouts: false}
 	case EffectMutation:
 		return retryPolicyValue{attempts: 1, retryTimeouts: false}
 	default:
-		return retryPolicyValue{attempts: 3, retryTimeouts: true}
+		return retryPolicyValue{attempts: 1, retryTimeouts: false}
 	}
 }
 

@@ -34,6 +34,7 @@ type ensureCall struct {
 type recoveryCall struct {
 	done   chan struct{}
 	result domain.RecoveryResult
+	epoch  uint64
 }
 
 // SessionManager owns the three-state session policy. It performs no I/O itself;
@@ -129,7 +130,7 @@ func (m *SessionManager) runEnsure(ctx context.Context, epoch uint64) domain.Ses
 	m.mu.Lock()
 	m.verifiedAt = time.Time{}
 	m.mu.Unlock()
-	recovery := m.Recover(ctx)
+	recovery := m.recoverAtEpoch(ctx, epoch)
 	if !m.sameEpoch(epoch) {
 		return domain.SessionMissing
 	}
@@ -141,12 +142,38 @@ func (m *SessionManager) runEnsure(ctx context.Context, epoch uint64) domain.Ses
 
 func (m *SessionManager) Recover(ctx context.Context) domain.RecoveryResult {
 	m.mu.Lock()
+	epoch := m.epoch
+	m.mu.Unlock()
+	return m.recoverAtEpoch(ctx, epoch)
+}
+
+func (m *SessionManager) recoverAtEpoch(ctx context.Context, epoch uint64) domain.RecoveryResult {
+	m.mu.Lock()
+	if m.epoch != epoch {
+		m.mu.Unlock()
+		return domain.RecoveryResult{
+			OK: false, Reason: domain.RecoveryFailed,
+			ErrorCode: domain.CodeAuthentication, Message: "登录已取消",
+		}
+	}
 	if !m.lastFailureAt.IsZero() && m.now().Sub(m.lastFailureAt) < m.recoveryCooldown {
-		result := domain.RecoveryResult{OK: false, Reason: domain.RecoveryCooldown, Message: "刚刚的自动登录失败，稍后再试"}
+		result := domain.RecoveryResult{
+			OK: false, Reason: domain.RecoveryCooldown,
+			ErrorCode: domain.CodeAuthentication, Message: "刚刚的自动登录失败，稍后再试",
+		}
+		m.lastResult = result
+		m.hasLastResult = true
 		m.mu.Unlock()
 		return result
 	}
 	if m.recovering != nil {
+		if m.recovering.epoch != epoch {
+			m.mu.Unlock()
+			return domain.RecoveryResult{
+				OK: false, Reason: domain.RecoveryFailed,
+				ErrorCode: domain.CodeAuthentication, Message: "登录已取消",
+			}
+		}
 		call := m.recovering
 		m.mu.Unlock()
 		select {
@@ -156,9 +183,8 @@ func (m *SessionManager) Recover(ctx context.Context) domain.RecoveryResult {
 			return call.result
 		}
 	}
-	call := &recoveryCall{done: make(chan struct{})}
+	call := &recoveryCall{done: make(chan struct{}), epoch: epoch}
 	m.recovering = call
-	epoch := m.epoch
 	m.mu.Unlock()
 
 	result := m.runRecovery(ctx, epoch)
@@ -176,7 +202,10 @@ func (m *SessionManager) Recover(ctx context.Context) domain.RecoveryResult {
 func (m *SessionManager) runRecovery(ctx context.Context, epoch uint64) domain.RecoveryResult {
 	response := m.port.LoginFromEnvironment(ctx)
 	if !m.sameEpoch(epoch) {
-		return domain.RecoveryResult{OK: false}
+		return domain.RecoveryResult{
+			OK: false, Reason: domain.RecoveryFailed,
+			ErrorCode: domain.CodeAuthentication, Message: "登录已取消",
+		}
 	}
 	if response.Success {
 		m.MarkVerified()
@@ -192,7 +221,11 @@ func (m *SessionManager) runRecovery(ctx context.Context, epoch uint64) domain.R
 	if response.ErrorCode == domain.CodeAuthentication {
 		reason = domain.RecoveryCredentials
 	}
-	result := domain.RecoveryResult{OK: false, Reason: reason, Message: response.Message}
+	result := domain.RecoveryResult{
+		OK: false, Reason: reason, Message: response.Message,
+		ErrorCode: response.ErrorCode, Retryable: response.ErrorCode == domain.CodeRateLimited ||
+			response.ErrorCode == domain.CodeNetworkUnavailable || response.ErrorCode == domain.CodeRequestTimeout,
+	}
 	m.mu.Lock()
 	m.lastFailureAt = m.now()
 	m.lastResult = result

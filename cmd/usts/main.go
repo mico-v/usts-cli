@@ -22,9 +22,19 @@ func main() {
 }
 
 func run() int {
+	rawArgs := os.Args[1:]
+	jsonRequested := hasJSON(rawArgs)
 	runtimeConfig, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "✗ "+cli.SanitizeTerminalText(domain.ErrorMessage(err, "配置加载失败")))
+		message := cli.SanitizeLine(cli.RedactSecret(domain.ErrorMessage(err, "配置加载失败")))
+		if jsonRequested {
+			_ = cli.WriteJSON(os.Stderr, cli.JSONErrorEnvelope{
+				SchemaVersion: 1, Command: commandName(rawArgs),
+				Error: cli.JSONError{Code: string(domain.CodeConfiguration), Message: message},
+			})
+		} else {
+			fmt.Fprintln(os.Stderr, "✗ "+message)
+		}
 		return domain.ExitCode(err)
 	}
 	for _, rejected := range runtimeConfig.Rejected {
@@ -52,7 +62,9 @@ func run() int {
 		Credentials:  runtimeConfig.Credentials,
 		TrustWindow:  time.Duration(runtimeConfig.SessionTrustMillis()) * time.Millisecond,
 		OnRetry: func(notice httpclient.RetryNotice) {
-			fmt.Fprintln(app.Err, app.Warning(retryMessage(notice)))
+			if !jsonRequested {
+				fmt.Fprintln(app.Err, app.Warning(retryMessage(notice)))
+			}
 		},
 	})
 	if err != nil {
@@ -60,7 +72,7 @@ func run() int {
 		return domain.ExitCode(err)
 	}
 
-	args := os.Args[1:]
+	args := rawArgs
 	if len(args) == 0 {
 		if err := cli.RunInteractive(context.Background(), app); err != nil {
 			app.ReportError(err, false, "interactive")
@@ -68,7 +80,7 @@ func run() int {
 		}
 		return 0
 	}
-	if args[0] == "--version" || args[0] == "-v" || args[0] == "version" {
+	if args[0] == "--version" || args[0] == "-V" {
 		fmt.Fprintln(app.Out, version)
 		return 0
 	}
@@ -77,9 +89,18 @@ func run() int {
 		return 0
 	}
 	if args[0] == "help" {
+		if len(args) > 2 {
+			err := domain.ConfigError("help 只接受一个主题参数")
+			app.ReportError(err, false, "help")
+			return domain.ExitCode(err)
+		}
 		topic := ""
 		if len(args) > 1 {
 			topic = args[1]
+		}
+		if topic == "--help" || topic == "-h" {
+			cli.WriteRootHelp(app.Out, version)
+			return 0
 		}
 		if err := cli.RunHelp(app, topic); err != nil {
 			app.ReportError(err, false, "help")
@@ -93,8 +114,11 @@ func run() int {
 		app.ReportError(err, hasJSON(args[1:]), args[0])
 		return domain.ExitCode(err)
 	}
-	if err := spec.Execute(context.Background(), app, args[1:]); err != nil {
-		app.ReportError(err, hasJSON(args[1:]), spec.Name)
+	jsonMode := !spec.HideJSON && hasJSON(args[1:])
+	commandCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := spec.Execute(commandCtx, app, args[1:]); err != nil {
+		app.ReportError(err, jsonMode, spec.Name)
 		return domain.ExitCode(err)
 	}
 	return 0
@@ -112,10 +136,29 @@ func retryMessage(notice httpclient.RetryNotice) string {
 }
 
 func hasJSON(args []string) bool {
+	mode := false
 	for _, arg := range args {
-		if arg == "--json" || strings.HasPrefix(arg, "--json=") {
-			return true
+		switch {
+		case arg == "--json" || arg == "-json":
+			mode = true
+		case strings.HasPrefix(arg, "--json="):
+			mode = !isFalse(strings.TrimPrefix(arg, "--json="))
+		case strings.HasPrefix(arg, "-json="):
+			mode = !isFalse(strings.TrimPrefix(arg, "-json="))
 		}
 	}
-	return false
+	return mode
+}
+
+func isFalse(value string) bool {
+	return strings.EqualFold(value, "false") || value == "0"
+}
+
+func commandName(args []string) string {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	return "usts"
 }

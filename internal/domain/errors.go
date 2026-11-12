@@ -15,6 +15,7 @@ const (
 	CodeSessionExpired     ErrorCode = "SESSION_EXPIRED"
 	CodeInvalidCredentials ErrorCode = "INVALID_CREDENTIALS"
 	CodeCaptchaRequired    ErrorCode = "CAPTCHA_REQUIRED"
+	CodePermissionDenied   ErrorCode = "PERMISSION_DENIED"
 	CodeRateLimited        ErrorCode = "RATE_LIMITED"
 	CodeNetworkUnavailable ErrorCode = "NETWORK_UNAVAILABLE"
 	CodeRequestTimeout     ErrorCode = "REQUEST_TIMEOUT"
@@ -85,7 +86,7 @@ func ExitCode(err error) int {
 	switch app.Code {
 	case CodeConfiguration:
 		return 2
-	case CodeAuthentication, CodeSessionExpired, CodeInvalidCredentials, CodeCaptchaRequired:
+	case CodeAuthentication, CodeSessionExpired, CodeInvalidCredentials, CodeCaptchaRequired, CodePermissionDenied:
 		return 3
 	case CodeRateLimited, CodeNetworkUnavailable, CodeRequestTimeout, CodeRemoteServer:
 		return 4

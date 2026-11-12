@@ -4,8 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
-	"time"
 
 	"github.com/mico-v/usts-cli/internal/domain"
 	"github.com/mico-v/usts-cli/internal/infrastructure/httpclient"
@@ -128,31 +126,17 @@ func (c *Client) QuerySelectedCourses(ctx context.Context, xnm, xqm string) ([]d
 func (c *Client) QueryNotifications(ctx context.Context) ([]domain.NotificationItem, error) {
 	items := make([]domain.NotificationItem, 0)
 	path := "/xtgl/index_cxDbsy.html?doType=query"
-	form := url.Values{
-		"sfyy": {"0"}, "flag": {"1"}, "_search": {"false"},
-		"nd":                   {strconv.FormatInt(time.Now().UnixMilli(), 10)},
-		"queryModel.showCount": {"1000"}, "queryModel.currentPage": {"1"},
-		"queryModel.sortName": {"cjsj"}, "queryModel.sortOrder": {"desc"}, "time": {"0"},
-	}
 	err := c.withReauth(ctx, httpclient.EffectRead, func() error {
-		headers := c.transport.FormHeaders(c.transport.BaseURL() + "/xtgl/index_initMenu.html")
-		response, err := c.transport.Do(ctx, httpclient.Request{
-			Method: http.MethodPost, Target: path, Body: []byte(form.Encode()),
-			Header: headers, Effect: httpclient.EffectRead,
-		})
+		records, err := PostGridCustom(
+			ctx, c.transport, path,
+			c.transport.BaseURL()+"/xtgl/index_initMenu.html",
+			map[string]string{
+				"sfyy": "0", "flag": "1", "time": "0",
+				"queryModel.sortName": "cjsj", "queryModel.sortOrder": "desc",
+			},
+		)
 		if err != nil {
 			return err
-		}
-		if err := AssertReadableResponse(response, "通知查询"); err != nil {
-			return err
-		}
-		data, err := ParseJSON(response.Body)
-		if err != nil {
-			return AmbiguousRejection("通知查询", err)
-		}
-		records, ok := arrayOrItems(data)
-		if !ok {
-			return AmbiguousRejection("通知查询", data)
 		}
 		for _, record := range records {
 			item := domain.NotificationItem{
@@ -160,6 +144,9 @@ func (c *Client) QueryNotifications(ctx context.Context) ([]domain.NotificationI
 				Type:      OptionalString(record, "type", "lx"),
 				Content:   OptionalString(record, "xxnr", "content"),
 				CreatedAt: OptionalString(record, "cjsj", "createTime", "sj"),
+				Status:    OptionalString(record, "clzt"),
+				Role:      OptionalString(record, "jsmc", "jsdm"),
+				Link:      OptionalString(record, "ljdz"),
 			}
 			if unread := BoolValue(record, "sfyy"); unread != nil {
 				item.Unread = unread
@@ -214,14 +201,64 @@ func (c *Client) QueryProfile(ctx context.Context) (domain.ProfileInfo, error) {
 	return profile, err
 }
 
+func (c *Client) QueryRichProfile(ctx context.Context) (domain.RichProfile, error) {
+	var profile domain.RichProfile
+	err := c.withReauth(ctx, httpclient.EffectRead, func() error {
+		response, err := c.transport.Do(ctx, httpclient.Request{
+			Method: http.MethodGet,
+			Target: "/xsxxxggl/xsxxwh_cxCkDgxsxx.html?gnmkdm=N100801",
+			Effect: httpclient.EffectRead,
+			Header: http.Header{
+				"Referer": []string{c.transport.BaseURL() + "/xsxxxggl/xsgrxxwh_cxXsgrxx.html?gnmkdm=N100801"},
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if err := AssertReadableResponse(response, "学生信息富查询"); err != nil {
+			return err
+		}
+		data, err := ParseJSON(response.Body)
+		if err != nil {
+			return AmbiguousRejection("学生信息富查询", err)
+		}
+		record, ok := data.(map[string]any)
+		if !ok {
+			return AmbiguousRejection("学生信息富查询", data)
+		}
+		profile, err = mapRichProfile(RawRecord(record))
+		if err != nil {
+			return err
+		}
+		if profile.StudentID == "" && profile.DisplayName == "" {
+			return AmbiguousRejection("学生信息富查询", data)
+		}
+		if profile.StudentID != "" {
+			c.mu.Lock()
+			username := c.username
+			c.mu.Unlock()
+			if username == "" {
+				c.mu.Lock()
+				c.username = profile.StudentID
+				c.mu.Unlock()
+				_ = c.SaveSession()
+			}
+		}
+		return nil
+	})
+	return profile, err
+}
+
 func arrayOrItems(data any) ([]RawRecord, bool) {
-	if records, ok := data.([]any); ok {
-		return RecordArray(records), true
+	if array, ok := data.([]any); ok {
+		records, err := RecordArrayStrict(array)
+		return records, err == nil
 	}
 	if object, ok := data.(map[string]any); ok {
 		if items, exists := object["items"]; exists {
 			if _, ok := items.([]any); ok {
-				return RecordArray(items), true
+				records, err := RecordArrayStrict(items)
+				return records, err == nil
 			}
 		}
 	}

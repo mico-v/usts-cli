@@ -12,6 +12,7 @@ var (
 	cookiePartPattern = regexp.MustCompile(`(;\s*[A-Za-z_][\w-]*=)[^\s;]+`)
 	tokenPattern      = regexp.MustCompile(`\b[A-Za-z0-9_-]{24,}\b`)
 	idPattern         = regexp.MustCompile(`\b\d{10,}\b`)
+	identityQuery     = regexp.MustCompile(`(?i)((?:su|xh|xh_id|username|yhm)=)[^&\s]+`)
 )
 
 func SanitizeTerminalText(value string) string {
@@ -22,7 +23,7 @@ func SanitizeTerminalText(value string) string {
 			builder.WriteRune(char)
 			continue
 		}
-		if unicode.IsControl(char) || isBidiOrFormat(char) {
+		if unicode.IsControl(char) || unicode.Is(unicode.Cf, char) || isBidiOrFormat(char) {
 			continue
 		}
 		builder.WriteRune(char)
@@ -30,9 +31,17 @@ func SanitizeTerminalText(value string) string {
 	return builder.String()
 }
 
+func SanitizeLine(value string) string {
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "\t", " ")
+	return SanitizeTerminalText(value)
+}
+
 func RedactSecret(value string) string {
 	value = secretKeyPattern.ReplaceAllString(value, "${1}[REDACTED]")
 	value = cookiePartPattern.ReplaceAllString(value, "${1}[REDACTED]")
+	value = identityQuery.ReplaceAllString(value, "${1}[REDACTED]")
 	value = tokenPattern.ReplaceAllString(value, "[REDACTED_TOKEN]")
 	value = idPattern.ReplaceAllString(value, "[REDACTED_ID]")
 	return value

@@ -1,21 +1,25 @@
 package domain
 
 type ScoreItem struct {
-	CourseName    string   `json:"courseName"`
-	CourseCode    string   `json:"courseCode"`
-	CourseNature  string   `json:"courseNature"`
-	Credit        *float64 `json:"credit"`
-	Score         string   `json:"score"`
-	GPA           *float64 `json:"gpa"`
-	College       string   `json:"college"`
-	Teacher       string   `json:"teacher"`
-	AssessMethod  string   `json:"assessMethod"`
-	ExamType      string   `json:"examType"`
-	AcademicYear  string   `json:"academicYear"`
-	Semester      string   `json:"semester"`
-	ClassName     string   `json:"className"`
-	Major         string   `json:"major"`
-	TeachingClass string   `json:"teachingClass"`
+	CourseName       string   `json:"courseName"`
+	CourseCode       string   `json:"courseCode"`
+	CourseNature     string   `json:"courseNature"`
+	Credit           *float64 `json:"credit"`
+	Score            string   `json:"score"`
+	GPA              *float64 `json:"gpa"`
+	College          string   `json:"college"`
+	Teacher          string   `json:"teacher"`
+	AssessMethod     string   `json:"assessMethod"`
+	ExamType         string   `json:"examType"`
+	AcademicYear     string   `json:"academicYear"`
+	Semester         string   `json:"semester"`
+	ClassName        string   `json:"className"`
+	Major            string   `json:"major"`
+	TeachingClass    string   `json:"teachingClass"`
+	TeachingClassID  *string  `json:"teachingClassId"`
+	StudentID        *string  `json:"studentId"`
+	AcademicYearCode *string  `json:"academicYearCode"`
+	SemesterCode     *string  `json:"semesterCode"`
 }
 
 type ExamItem struct {
@@ -26,12 +30,44 @@ type ExamItem struct {
 	ExamType   string `json:"examType"`
 }
 
+type UnplannedExamItem struct {
+	CourseName    string   `json:"courseName"`
+	CourseCode    string   `json:"courseCode"`
+	ExamName      *string  `json:"examName"`
+	TeachingClass *string  `json:"teachingClass"`
+	Teacher       *string  `json:"teacher"`
+	College       *string  `json:"college"`
+	Credit        *float64 `json:"credit"`
+	StudentID     *string  `json:"studentId"`
+	StudentName   *string  `json:"studentName"`
+	ClassName     *string  `json:"className"`
+	Grade         *string  `json:"grade"`
+	Major         *string  `json:"major"`
+	AcademicYear  *string  `json:"academicYear"`
+	Semester      *string  `json:"semester"`
+	Process       *string  `json:"process"`
+}
+
 type CourseListItem struct {
-	CourseName    string `json:"courseName"`
-	CourseCode    string `json:"courseCode"`
-	Credit        string `json:"credit"`
-	Teacher       string `json:"teacher"`
-	TeachingClass string `json:"teachingClass"`
+	CourseName     string  `json:"courseName"`
+	CourseCode     string  `json:"courseCode"`
+	Credit         string  `json:"credit"`
+	Teacher        string  `json:"teacher"`
+	TeachingClass  string  `json:"teachingClass"`
+	StudentID      *string `json:"studentId"`
+	StudentName    *string `json:"studentName"`
+	ClassName      *string `json:"className"`
+	Major          *string `json:"major"`
+	Grade          *string `json:"grade"`
+	College        *string `json:"college"`
+	Campus         *string `json:"campus"`
+	CourseNature   *string `json:"courseNature"`
+	CourseCategory *string `json:"courseCategory"`
+	TeachingTime   *string `json:"teachingTime"`
+	TeachingPlace  *string `json:"teachingPlace"`
+	Status         *string `json:"status"`
+	Registered     *bool   `json:"registered"`
+	Paid           *bool   `json:"paid"`
 }
 
 type NotificationItem struct {
@@ -40,19 +76,24 @@ type NotificationItem struct {
 	Content   *string `json:"content"`
 	CreatedAt *string `json:"createdAt"`
 	Unread    *bool   `json:"unread"`
+	Status    *string `json:"status"`
+	Role      *string `json:"role"`
+	Link      *string `json:"link"`
 }
 
 type SelectedCourseItem struct {
-	CourseID       *string  `json:"courseId"`
-	ClassID        *string  `json:"classId"`
-	Title          *string  `json:"title"`
-	Teacher        *string  `json:"teacher"`
-	Credit         *float64 `json:"credit"`
-	Category       *string  `json:"category"`
-	Capacity       *float64 `json:"capacity"`
-	SelectedNumber *float64 `json:"selectedNumber"`
-	Place          *string  `json:"place"`
-	Time           *string  `json:"time"`
+	CourseID         *string  `json:"courseId"`
+	ClassID          *string  `json:"classId"`
+	Title            *string  `json:"title"`
+	Teacher          *string  `json:"teacher"`
+	Credit           *float64 `json:"credit"`
+	Category         *string  `json:"category"`
+	Capacity         *float64 `json:"capacity"`
+	SelectedNumber   *float64 `json:"selectedNumber"`
+	Place            *string  `json:"place"`
+	Time             *string  `json:"time"`
+	CategoryCode     *string  `json:"categoryCode"`
+	SelectionBlockID *string  `json:"selectionBlockId"`
 }
 
 type ProfileInfo struct {
@@ -67,6 +108,65 @@ type ProfileInfo struct {
 	IDCard         *string `json:"idCard"`
 	Phone          *string `json:"phone"`
 	Email          *string `json:"email"`
+}
+
+type RichProfile struct {
+	StudentID          string  `json:"studentId"`
+	InternalID         string  `json:"internalId"`
+	DisplayName        string  `json:"displayName"`
+	NamePinyin         *string `json:"namePinyin"`
+	GenderCode         *string `json:"genderCode"`
+	Nationality        *string `json:"nationality"`
+	BirthDate          *string `json:"birthDate"`
+	IDType             *string `json:"idType"`
+	IDCard             *string `json:"idCard"`
+	Phone              *string `json:"phone"`
+	Email              *string `json:"email"`
+	Address            *string `json:"address"`
+	HomePlace          *string `json:"homePlace"`
+	PostalCode         *string `json:"postalCode"`
+	PoliticalStatus    *string `json:"politicalStatus"`
+	EnrollmentDate     *string `json:"enrollmentDate"`
+	StudentStatus      *string `json:"studentStatus"`
+	ClassID            *string `json:"classId"`
+	CollegeID          *string `json:"collegeId"`
+	CollegeName        *string `json:"collegeName"`
+	MajorID            *string `json:"majorId"`
+	GradeID            *string `json:"gradeId"`
+	TrainingLevel      *string `json:"trainingLevel"`
+	StudyForm          *string `json:"studyForm"`
+	StudyLength        *string `json:"studyLength"`
+	ExpectedGraduation *string `json:"expectedGraduation"`
+	CandidateNumber    *string `json:"candidateNumber"`
+	CandidateCategory  *string `json:"candidateCategory"`
+	StudentSource      *string `json:"studentSource"`
+	HasPhoto           *bool   `json:"hasPhoto"`
+}
+
+type HTMLTable struct {
+	Headers []string   `json:"headers"`
+	Rows    [][]string `json:"rows"`
+}
+
+type HTMLDetail struct {
+	Title    string      `json:"title"`
+	Messages []string    `json:"messages"`
+	Tables   []HTMLTable `json:"tables"`
+	Text     []string    `json:"text"`
+}
+
+type TableResult struct {
+	Section string     `json:"section"`
+	Headers []string   `json:"headers"`
+	Rows    [][]string `json:"rows"`
+}
+
+type SelectionStatus struct {
+	Code string `json:"code"`
+}
+
+type ScalarValue struct {
+	Value string `json:"value"`
 }
 
 type ScheduleItem struct {
