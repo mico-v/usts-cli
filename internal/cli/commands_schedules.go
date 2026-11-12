@@ -67,7 +67,7 @@ func bindFreeClass(fs *flag.FlagSet, options any) {
 	fs.StringVar(&opts.Type, "type", "", "场地类别名称包含")
 	fs.StringVar(&opts.Building, "building", "", "楼号名称包含")
 	fs.StringVar(&opts.Name, "name", "", "场地名称/编号包含")
-	fs.IntVar(&opts.MinSeats, "min-seats", 0, "只显示座位数不少于该值的场地")
+	fs.IntVar(&opts.MinSeats, "min-seats", -1, "只显示座位数不少于该值的场地")
 	fs.IntVar(&opts.Limit, "limit", 50, "终端最多显示多少条，0=全部")
 }
 
@@ -146,14 +146,17 @@ func runFreeClass(ctx context.Context, app *App, options any) error {
 	if err != nil {
 		return err
 	}
-	if opts.MinSeats < 0 || opts.Limit < 0 {
-		return domain.ConfigError("--min-seats 与 --limit 必须是不小于 0 的整数")
+	if opts.MinSeats != -1 && opts.MinSeats < 1 {
+		return domain.ConfigError("--min-seats 必须是不小于 1 的整数")
+	}
+	if opts.Limit < 0 {
+		return domain.ConfigError("--limit 必须是不小于 0 的整数")
 	}
 	if err := app.EnsureSession(ctx); err != nil {
 		return err
 	}
 	var minSeats *int
-	if opts.MinSeats > 0 {
+	if opts.MinSeats >= 1 {
 		minSeats = &opts.MinSeats
 	}
 	view, err := application.ReadFreeClassrooms(ctx, app.Client, application.FreeClassroomsQuery{

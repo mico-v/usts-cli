@@ -138,6 +138,7 @@ func WriteRootHelp(writer io.Writer, version string) {
 	}
 	fmt.Fprintln(writer, "  也可以 usts help <命令>（等同于 usts <命令> --help）")
 	fmt.Fprintln(writer, "\n不带任何子命令运行 usts 会进入交互式菜单（需要真实终端）。")
+	fmt.Fprintln(writer, "交互菜单支持 ↑/↓、j/k、Ctrl+P/Ctrl+N、PgUp/PgDn、Home/End、数字键跳选和 Ctrl+C 退出。")
 }
 
 func WriteCommandHelp(writer io.Writer, spec CommandSpec) {

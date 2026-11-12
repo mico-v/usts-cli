@@ -55,6 +55,7 @@ internal/cli
   commands_*.go            会话检查 -> 用例 -> 渲染
   render.go                终端表格、标题与空状态
   interactive.go           交互菜单与表单
+  select.go                方向键、翻页与滚动视口选择器
   help.go                  帮助主题
 ```
 

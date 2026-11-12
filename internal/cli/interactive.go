@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -15,8 +16,11 @@ import (
 )
 
 func PromptLine(app *App, prompt string) (string, error) {
-	fmt.Fprint(app.Out, prompt)
+	fmt.Fprint(app.Out, tableCell(prompt))
 	line, err := app.In.ReadString('\n')
+	if errors.Is(err, io.EOF) && line == "" {
+		return "", errInterrupted
+	}
 	if err != nil && !errors.Is(err, os.ErrClosed) && line == "" {
 		return "", domain.WrapError(domain.CodeConfiguration, "读取终端输入失败", err)
 	}
@@ -24,7 +28,7 @@ func PromptLine(app *App, prompt string) (string, error) {
 }
 
 func PromptPassword(app *App, prompt string) (string, error) {
-	fmt.Fprint(app.Out, prompt)
+	fmt.Fprint(app.Out, tableCell(prompt))
 	bytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(app.Out)
 	if err != nil {
@@ -57,13 +61,24 @@ func PromptSelect(app *App, prompt string, choices []promptChoice, defaultIndex 
 	if len(choices) == 0 {
 		return "", domain.ConfigError("%s没有可选项", prompt)
 	}
+	if defaultIndex < 0 || defaultIndex >= len(choices) {
+		defaultIndex = 0
+	}
+	prompt = tableCell(prompt)
+	if app.InTTY && app.OutTTY && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+		return promptSelectTUI(app, prompt, choices, defaultIndex)
+	}
+	return promptSelectNumbered(app, prompt, choices, defaultIndex)
+}
+
+func promptSelectNumbered(app *App, prompt string, choices []promptChoice, defaultIndex int) (string, error) {
 	fmt.Fprintln(app.Out, prompt)
 	for index, choice := range choices {
 		marker := " "
 		if index == defaultIndex {
 			marker = "*"
 		}
-		fmt.Fprintf(app.Out, "  %s %d. %s\n", marker, index+1, SanitizeTerminalText(choice.Label))
+		fmt.Fprintf(app.Out, "  %s %d. %s\n", marker, index+1, tableCell(choice.Label))
 	}
 	raw, err := PromptLine(app, fmt.Sprintf("请选择 [%d]: ", defaultIndex+1))
 	if err != nil {
@@ -101,7 +116,7 @@ func RunInteractive(ctx context.Context, app *App) error {
 		return domain.ConfigError("交互式菜单需要交互式终端，但当前 stdin 不是终端。请直接使用子命令（例如 usts scores），完整列表见 usts --help")
 	}
 	fmt.Fprintln(app.Out, app.Header("苏州科技大学教务系统 CLI"))
-	fmt.Fprintln(app.Out, app.Info("使用数字选择，回车确认。首次使用请先「登录教务系统」。"))
+	fmt.Fprintln(app.Out, app.Info("使用方向键选择，回车确认；PgUp/PgDn 翻页，Ctrl+C 退出。首次使用请先「登录教务系统」。"))
 	for {
 		action, err := PromptSelect(app, "请选择操作（"+sessionLabel(app)+"）", []promptChoice{
 			{Label: "登录教务系统", Value: "login"},
@@ -109,8 +124,11 @@ func RunInteractive(ctx context.Context, app *App) error {
 			{Label: "查看个人信息", Value: "profile"},
 			{Label: "退出登录（清除本地会话）", Value: "logout"},
 			{Label: "退出", Value: "exit"},
-		}, 1)
+		}, 0)
 		if err != nil {
+			if errors.Is(err, errInterrupted) {
+				return nil
+			}
 			return err
 		}
 		switch action {
@@ -120,20 +138,32 @@ func RunInteractive(ctx context.Context, app *App) error {
 		case "login":
 			spec, _ := FindCommand("login")
 			if err := spec.Execute(ctx, app, nil); err != nil {
+				if errors.Is(err, errInterrupted) {
+					return nil
+				}
 				app.ReportError(err, false, "login")
 			}
 		case "logout":
 			spec, _ := FindCommand("logout")
 			if err := spec.Execute(ctx, app, nil); err != nil {
+				if errors.Is(err, errInterrupted) {
+					return nil
+				}
 				app.ReportError(err, false, "logout")
 			}
 		case "profile":
 			spec, _ := FindCommand("profile")
 			if err := spec.Execute(ctx, app, nil); err != nil {
+				if errors.Is(err, errInterrupted) {
+					return nil
+				}
 				app.ReportError(err, false, "profile")
 			}
 		case "query":
 			if err := runInteractiveQuery(ctx, app); err != nil {
+				if errors.Is(err, errInterrupted) {
+					return nil
+				}
 				app.ReportError(err, false, "interactive")
 			}
 		}
@@ -362,6 +392,23 @@ func promptYear(app *App, defaultValue string) (string, error) {
 	return PromptSelect(app, "选择学年", choices, defaultIndex)
 }
 
+func promptClassYear(app *App, defaultValue string) (string, error) {
+	current, _ := strconv.Atoi(defaultValue)
+	if current == 0 {
+		current = time.Now().Year()
+	}
+	var choices []promptChoice
+	defaultIndex := 0
+	for year := current - 1; year <= current+5; year++ {
+		value := strconv.Itoa(year)
+		if value == defaultValue {
+			defaultIndex = len(choices)
+		}
+		choices = append(choices, promptChoice{Label: fmt.Sprintf("%d-%d 学年", year, year+1), Value: value})
+	}
+	return PromptSelect(app, "选择学年", choices, defaultIndex)
+}
+
 func promptSemester(app *App, defaultValue string) (string, error) {
 	choices := []promptChoice{
 		{Label: "第一学期（秋）", Value: "3"},
@@ -404,7 +451,7 @@ func InteractiveClassSchedule(
 	options domain.ClassScheduleView,
 	termValue domain.Term,
 ) (domain.ClassScheduleQuery, error) {
-	year, err := promptYear(app, termValue.AcademicYear)
+	year, err := promptClassYear(app, termValue.AcademicYear)
 	if err != nil {
 		return domain.ClassScheduleQuery{}, err
 	}

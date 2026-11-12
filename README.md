@@ -96,6 +96,7 @@ bin/usts --help
 
 Go 版架构见 [docs/go-architecture.md](docs/go-architecture.md)，重写决策见
 [ADR-0008](docs/adr/0008-go-rewrite.md)，验证记录见 [docs/validation.md](docs/validation.md)。
+交互菜单支持方向键、首尾循环、数字键跳选、PgUp/PgDn、Home/End 和滚动视口。
 
 ## 许可
 
