@@ -20,6 +20,8 @@ func TestClassifyResponse(t *testing.T) {
 		{"rate limited", &httpclient.Response{StatusCode: 429}, VerdictRateLimited},
 		{"server error", &httpclient.Response{StatusCode: 503}, VerdictServerError},
 		{"permission denied", &httpclient.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/plain"}}, Body: []byte("没有访问权限!")}, VerdictPermissionDenied},
+		{"permission denied function marker", &httpclient.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: []byte("无功能权限")}, VerdictPermissionDenied},
+		{"permission denied function phrase", &httpclient.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: []byte("没有功能权限")}, VerdictPermissionDenied},
 		{"login body", &httpclient.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: []byte(`请先登录`)}, VerdictSessionExpired},
 	}
 	for _, test := range tests {

@@ -2,7 +2,7 @@
 
 统计口径：只计算 `jwgl-web-api-catalog.md` 中已由真实请求确认过响应形状的只读数据端点；页面壳、`read?` 启发式路径、未实测导出和写接口不计入。
 
-当前结果：**53 个确认只读端点，45 个已实现并真实调用成功，8 个已实现但当前账号返回无权限/不可用，0 个未实现。**
+当前结果：**53 个确认只读端点，53 个已实现并真实调用成功，0 个未实现。**
 
 ## 已实现并真实成功
 
@@ -12,7 +12,7 @@
 | 考试 | 已排考、未排考 | `exams`, `exams --unplanned` |
 | 选课名单 | 选课名单 | `courses` |
 | 课表 | 个人课表、班级课表视图、专业/班级下拉、班级课表 | `schedule`, `clsched` |
-| 个人信息 | 基本信息、富查询、班级信息、选课状态 | `profile`, `profile --full`, `profile --section classes`, `profile --section selection-status` |
+| 个人信息 | 基本信息、富查询、9 个表格型子页签、选课状态 | `profile`, `profile --full`, `profile --section <分区>` |
 | 通知 | 通知/待办 | `notifications` |
 | 已选课程 | 已选课程、板块课程、已选/意向视图、历年学分、评教状态 | `selected-courses`, `--blocks`, `--chosen`, `--credits`, `--evaluation-status` |
 | 空闲教室 | 场地查询 | `freeclass` |
@@ -27,20 +27,24 @@
 
 公共字典已真实验证：开课单位、年级、学院、专业、班级、校区、课程类别、课程性质、课程归属、教学方式、上课时间、节次。
 
-## 已实现但当前账号不可用
+## 个人信息子页签实测
 
-以下 8 个个人信息子页签按页面 JS 的 `BaseJqGrid` 契约实现，但当前账号真实请求返回 `PERMISSION_DENIED`。不能把它们计为“已验证可用”。
+这些端点必须按页面实际契约使用 **GET**，并带 `xh_id`、`fromXh_id`；表格端点只使用
+`queryModel.showCount/currentPage` 分页，不能复用写接口式的 `page/rows` 双分页参数。
+当前账号的真实结果如下：
 
-| 分区 | 端点 |
-|---|---|
-| `primary-major` | `/xsxxxggl/xsxxwh_cxZxzyxx.html` |
-| `secondary-major` | `/xsxxxggl/xsxxwh_cxFxzyxx.html` |
-| `unassigned-major` | `/xsxxxggl/xsxxwh_cxWzyxx.html` |
-| `exam-levels` | `/xsxxxggl/xsxxwh_cxDjksxx.html` |
-| `family` | `/xsxxxggl/xsxxwh_cxXsjtcy.html` |
-| `records` | `/xsxxxggl/xsxxwh_cxXsxxjl.html` |
-| `academic-years` | `/xsxxxggl/xsxxwh_cxXsxnjd.html` |
-| `selected-courses` | `/xsxxxggl/xsxxwh_cxXsxkxx.html` |
+| 分区 | 端点 | 当前结果 |
+|---|---|---|
+| `primary-major` | `/xsxxxggl/xsxxwh_cxZxzyxx.html` | 成功，合法空结果 |
+| `secondary-major` | `/xsxxxggl/xsxxwh_cxFxzyxx.html` | 成功，合法空结果 |
+| `unassigned-major` | `/xsxxxggl/xsxxwh_cxWzyxx.html` | 成功，合法空结果 |
+| `exam-levels` | `/xsxxxggl/xsxxwh_cxDjksxx.html` | 成功，3 条 |
+| `family` | `/xsxxxggl/xsxxwh_cxXsjtcy.html` | 成功，1 条 |
+| `records` | `/xsxxxggl/xsxxwh_cxXsxxjl.html` | 成功，合法空结果 |
+| `academic-years` | `/xsxxxggl/xsxxwh_cxXsxnjd.html` | 成功，合法空结果（HTTP 910 空网格体） |
+| `classes` | `/xsxxxggl/xsxxwh_cxBjxxList.html` | 成功，1 条 |
+| `selected-courses` | `/xsxxxggl/xsxxwh_cxXsxkxx.html` | 成功，46 条 |
+| `selection-status` | `/xsxxxggl/xsxxwh_cxViewKbzg.html` | 成功，状态码 1 |
 
 ## 明确排除
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/mico-v/usts-cli/internal/domain"
 	"github.com/mico-v/usts-cli/internal/infrastructure/httpclient"
@@ -24,11 +25,10 @@ const (
 )
 
 type profileSectionSpec struct {
-	Path            string
-	Headers         []string
-	Columns         []string
-	SelectedCourses bool
-	GetJSONArray    bool
+	Path         string
+	Headers      []string
+	Columns      []string
+	GetJSONArray bool
 }
 
 var profileSections = map[string]profileSectionSpec{
@@ -74,10 +74,9 @@ var profileSections = map[string]profileSectionSpec{
 		GetJSONArray: true,
 	},
 	ProfileSectionSelectedCourses: {
-		Path:            "/xsxxxggl/xsxxwh_cxXsxkxx.html",
-		Headers:         []string{"学年", "学期", "课程", "开课学院", "课程类别", "课程归属", "学分", "教学班", "教师", "上课时间", "上课地点"},
-		Columns:         []string{"xnmc", "xqmmc", "kcmc", "kkxy", "kclbmc", "kcgsmc", "xf", "jxbmc", "jsxm", "sksj", "jxdd"},
-		SelectedCourses: true,
+		Path:    "/xsxxxggl/xsxxwh_cxXsxkxx.html",
+		Headers: []string{"学年", "学期", "课程", "开课学院", "课程类别", "课程归属", "学分", "教学班", "教师", "上课时间", "上课地点"},
+		Columns: []string{"xnmc", "xqmmc", "kcmc", "kkxy", "kclbmc", "kcgsmc", "xf", "jxbmc", "jsxm", "sksj", "jxdd"},
 	},
 }
 
@@ -118,43 +117,12 @@ func (c *Client) QueryProfileSection(
 	var records []RawRecord
 	err = c.withReauth(ctx, httpclient.EffectRead, func() error {
 		if spec.GetJSONArray {
-			query := url.Values{
-				"gnmkdm": {"N100801"}, "xh_id": {profile.InternalID}, "fromXh_id": {profile.InternalID},
-			}
-			response, err := c.transport.Do(ctx, httpclient.Request{
-				Method: http.MethodGet,
-				Target: spec.Path + "?" + query.Encode(),
-				Effect: httpclient.EffectRead,
-				Header: http.Header{"Referer": []string{referer}},
-			})
-			if err != nil {
-				return err
-			}
-			if err := AssertReadableResponse(response, "个人信息分区查询"); err != nil {
-				return err
-			}
-			data, err := ParseJSON(response.Body)
-			if err != nil {
-				return AmbiguousRejection("个人信息分区查询", err)
-			}
-			var ok bool
-			records, ok = arrayOrItems(data)
-			if !ok {
-				return AmbiguousRejection("个人信息分区查询", data)
-			}
-			return nil
-		}
-		extra := map[string]string{}
-		target := spec.Path + "?xh_id=" + url.QueryEscape(profile.InternalID) + "&fromXh_id="
-		if spec.SelectedCourses {
-			target = spec.Path + "?fromXh_id="
-			extra["xh_id"] = profile.InternalID
-			extra["xnm"] = xnm
-			extra["xqm"] = xqm
-			extra["kcxzdm"] = ""
+			var err error
+			records, err = c.getProfileArray(ctx, spec.Path, profile.InternalID, referer)
+			return err
 		}
 		var err error
-		records, err = PostGridCustom(ctx, c.transport, target, referer, extra)
+		records, err = c.getProfileGrid(ctx, spec.Path, profile.InternalID, referer)
 		return err
 	})
 	if err != nil {
@@ -171,6 +139,144 @@ func (c *Client) QueryProfileSection(
 	return domain.TableResult{
 		Section: section, Headers: append([]string(nil), spec.Headers...), Rows: rows,
 	}, nil
+}
+
+func (c *Client) getProfileArray(
+	ctx context.Context,
+	endpoint, internalID, referer string,
+) ([]RawRecord, error) {
+	query := url.Values{
+		"gnmkdm": {"N100801"}, "xh_id": {internalID}, "fromXh_id": {""},
+	}
+	response, err := c.transport.Do(ctx, httpclient.Request{
+		Method: http.MethodGet,
+		Target: endpoint + "?" + query.Encode(),
+		Effect: httpclient.EffectRead,
+		Header: http.Header{"Referer": []string{referer}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := AssertReadableResponse(response, "个人信息分区查询"); err != nil {
+		return nil, err
+	}
+	data, err := ParseJSON(response.Body)
+	if err != nil {
+		return nil, AmbiguousRejection("个人信息分区查询", err)
+	}
+	records, ok := arrayOrItems(data)
+	if !ok {
+		return nil, AmbiguousRejection("个人信息分区查询", data)
+	}
+	return records, nil
+}
+
+func (c *Client) getProfileGrid(
+	ctx context.Context,
+	endpoint, internalID, referer string,
+) ([]RawRecord, error) {
+	var all []RawRecord
+	responseBytes := 0
+	complete := false
+	for page := 1; page <= maxGridPages; page++ {
+		query := url.Values{
+			"gnmkdm":                 {"N100801"},
+			"xh_id":                  {internalID},
+			"fromXh_id":              {""},
+			"queryModel.showCount":   {strconv.Itoa(gridPageSize)},
+			"queryModel.currentPage": {strconv.Itoa(page)},
+		}
+		response, err := c.transport.Do(ctx, httpclient.Request{
+			Method: http.MethodGet,
+			Target: endpoint + "?" + query.Encode(),
+			Effect: httpclient.EffectRead,
+			Header: http.Header{"Referer": []string{referer}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		responseBytes += len(response.Body)
+		if responseBytes > maxGridBytes {
+			return nil, domain.NewError(domain.CodeProtocolChanged, "个人信息分区响应超过 64 MiB 上限")
+		}
+		data, parseErr := ParseJSON(response.Body)
+		if response.StatusCode == 910 && parseErr == nil {
+			records, total, ok := profileGridRecords(data)
+			if ok && len(records) == 0 && total == 0 {
+				complete = true
+				break
+			}
+		}
+		if err := AssertReadableResponse(response, "个人信息分区查询"); err != nil {
+			return nil, err
+		}
+		if parseErr != nil {
+			return nil, AmbiguousRejection("个人信息分区查询", parseErr)
+		}
+		records, total, ok := profileGridRecords(data)
+		if !ok {
+			return nil, AmbiguousRejection("个人信息分区查询", data)
+		}
+		all = append(all, records...)
+		if total > maxGridRecords {
+			return nil, domain.NewError(domain.CodeProtocolChanged, "个人信息分区结果超过 100000 条上限")
+		}
+		if total > 0 && len(all) >= total {
+			complete = true
+			break
+		}
+		if len(records) == 0 {
+			if total > 0 && len(all) < total {
+				return nil, domain.NewError(domain.CodeProtocolChanged, "个人信息分区查询提前结束：服务端声明的总数大于已返回数据")
+			}
+			complete = true
+			break
+		}
+		if len(all) > maxGridRecords {
+			return nil, domain.NewError(domain.CodeProtocolChanged, "个人信息分区结果超过 100000 条上限")
+		}
+		if total == 0 && len(records) < gridPageSize {
+			complete = true
+			break
+		}
+	}
+	if !complete {
+		return nil, domain.NewError(domain.CodeProtocolChanged, "个人信息分区查询超过最大分页数，拒绝返回可能被截断的数据")
+	}
+	return all, nil
+}
+
+func profileGridRecords(data any) ([]RawRecord, int, bool) {
+	switch typed := data.(type) {
+	case []any:
+		records, err := RecordArrayStrict(typed)
+		return records, len(records), err == nil
+	case map[string]any:
+		if items, exists := typed["items"]; exists {
+			array, ok := items.([]any)
+			if !ok {
+				return nil, 0, false
+			}
+			records, err := RecordArrayStrict(array)
+			if err != nil {
+				return nil, 0, false
+			}
+			total := numberFromAny(typed["totalCount"])
+			if _, exists := typed["totalCount"]; !exists {
+				total = numberFromAny(typed["totalResult"])
+			}
+			return records, total, true
+		}
+		if totalResult, exists := typed["totalResult"]; exists && numberFromAny(totalResult) == 0 {
+			if _, hasQueryModel := typed["queryModel"]; hasQueryModel {
+				return []RawRecord{}, 0, true
+			}
+			if _, hasPageable := typed["pageable"]; hasPageable {
+				return []RawRecord{}, 0, true
+			}
+		}
+	}
+	return nil, 0, false
 }
 
 func (c *Client) QuerySelectionStatus(ctx context.Context, xnm, xqm string) (domain.SelectionStatus, error) {

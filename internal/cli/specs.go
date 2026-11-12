@@ -80,9 +80,10 @@ func init() {
 				"--full                 查询完整学生信息",
 				"--section <分区>       查询个人信息子页签（含 selection-status）",
 			},
-			NewOptions: func() any { return &profileOptions{} },
-			Bind:       bindProfile,
-			Run:        runProfile,
+			NewOptions:      func() any { return &profileOptions{} },
+			Bind:            bindProfile,
+			Run:             runProfile,
+			InteractiveArgs: interactiveProfileArgs,
 		},
 		CommandSpec{
 			Name: "gpa", Summary: "查询学业成绩概览（GPA/学分）",

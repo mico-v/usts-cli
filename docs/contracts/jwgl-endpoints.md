@@ -30,6 +30,10 @@
 
 `ambiguous` **不是**结论而是疑问：调用方（`JwglClient.withReauth`）会向探针端点发一次请求拿正面证据，再决定重登重放还是如实报 `PROTOCOL_CHANGED`。网络异常与 WAF 连接重置记为 `unknown`，一律 fail-open，不得升级为失效。
 
+个人信息子页签的 GET 网格是一个经过实测的例外：服务端可能在无数据时返回
+`HTTP 910` + `{queryModel, totalResult: "0"}`，且没有 `items`。适配器只在这个
+已确认的空网格形状上把它映射成空表；其它 `910`/错误提示仍按 `ambiguous` 处理。
+
 分页列表的**任何一页**出现非 JSON、或 JSON 体缺少 `items`/`totalCount`，都按 `ambiguous` 抛错——绝不返回截断后的部分结果。
 
 ## 重试与副作用契约

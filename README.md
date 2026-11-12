@@ -88,7 +88,7 @@ node dist/index.js --help
 
 ### Go 重写分支
 
-`rewrite/go` 分支包含并行的 Go 实现（Go 1.27.3+），当前不替换 npm 发布入口：
+`rewrite/go` 分支包含并行的 Go 实现（Go 1.27.4+），当前不替换 npm 发布入口：
 
 ```bash
 make build         # 生成 bin/usts

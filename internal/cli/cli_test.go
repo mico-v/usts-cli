@@ -225,3 +225,65 @@ func TestFreeClassMinSeatsDefaultAndValidation(t *testing.T) {
 		t.Fatalf("min-seats=0 error = %v, want configuration error", err)
 	}
 }
+
+func TestSelectedCourseContextCanBeChosenInteractively(t *testing.T) {
+	firstCategory, firstBlock := "01", "block-1"
+	secondCategory, secondBlock := "06", "block-2"
+	items := []domain.SelectedCourseItem{
+		{CategoryCode: &firstCategory, SelectionBlockID: &firstBlock},
+		{CategoryCode: &secondCategory, SelectionBlockID: &secondBlock},
+	}
+	var output bytes.Buffer
+	app := &App{
+		In:     bufio.NewReader(strings.NewReader("2\n")),
+		Out:    &output,
+		InTTY:  true,
+		OutTTY: false,
+	}
+	category, block, err := resolveSelectedContextInteractive(app, items, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if category != secondCategory || block != secondBlock {
+		t.Fatalf("selected context = %s/%s, want %s/%s", category, block, secondCategory, secondBlock)
+	}
+}
+
+func TestScoreDetailCanBeChosenInteractively(t *testing.T) {
+	firstClass, secondClass := "class-1", "class-2"
+	items := []domain.ScoreItem{
+		{CourseName: "课程一", CourseCode: "C1", TeachingClassID: &firstClass},
+		{CourseName: "课程二", CourseCode: "C2", TeachingClassID: &secondClass},
+	}
+	var output bytes.Buffer
+	app := &App{
+		In:     bufio.NewReader(strings.NewReader("2\n")),
+		Out:    &output,
+		InTTY:  true,
+		OutTTY: false,
+	}
+	selected, err := selectScoreForDetailInteractive(app, items, &scoresOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.TeachingClassID == nil || *selected.TeachingClassID != secondClass {
+		t.Fatalf("selected teaching class = %#v, want %s", selected.TeachingClassID, secondClass)
+	}
+}
+
+func TestInteractiveProfileOffersSectionSelection(t *testing.T) {
+	var output bytes.Buffer
+	app := &App{
+		In:     bufio.NewReader(strings.NewReader("3\n2\n")),
+		Out:    &output,
+		InTTY:  true,
+		OutTTY: false,
+	}
+	args, err := interactiveProfileArgs(context.Background(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || args[0] != "--section" || args[1] == "" {
+		t.Fatalf("profile args = %#v", args)
+	}
+}

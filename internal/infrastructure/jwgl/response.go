@@ -50,7 +50,9 @@ func ClassifyResponse(response *httpclient.Response) Verdict {
 	if response.StatusCode >= 400 {
 		return VerdictServerError
 	}
-	if bytes.Contains(response.Body, []byte("没有访问权限")) {
+	if bytes.Contains(response.Body, []byte("没有访问权限")) ||
+		bytes.Contains(response.Body, []byte("无功能权限")) ||
+		bytes.Contains(response.Body, []byte("没有功能权限")) {
 		return VerdictPermissionDenied
 	}
 	if looksLikeHTML(response) && sessionMarker.Match(response.Body) {

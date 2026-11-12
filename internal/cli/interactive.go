@@ -154,7 +154,23 @@ func RunInteractive(ctx context.Context, app *App) error {
 			}
 		case "profile":
 			spec, _ := FindCommand("profile")
-			if err := spec.Execute(ctx, app, nil); err != nil {
+			if err := app.EnsureSession(ctx); err != nil {
+				app.ReportError(err, false, "profile")
+				continue
+			}
+			args := []string(nil)
+			if spec.InteractiveArgs != nil {
+				var err error
+				args, err = spec.InteractiveArgs(ctx, app)
+				if err != nil {
+					if errors.Is(err, errInterrupted) {
+						return nil
+					}
+					app.ReportError(err, false, "profile")
+					continue
+				}
+			}
+			if err := spec.Execute(ctx, app, args); err != nil {
 				if errors.Is(err, errInterrupted) {
 					return nil
 				}
@@ -254,6 +270,46 @@ func interactiveTermArgs(_ context.Context, app *App) ([]string, error) {
 	return []string{"--xnm", year, "--xqm", semester}, nil
 }
 
+func interactiveProfileArgs(_ context.Context, app *App) ([]string, error) {
+	view, err := PromptSelect(app, "个人信息视图", []promptChoice{
+		{Label: "基本信息", Value: "basic"},
+		{Label: "完整学生信息", Value: "full"},
+		{Label: "个人信息子页签", Value: "section"},
+	}, 0)
+	if err != nil {
+		return nil, err
+	}
+	switch view {
+	case "full":
+		return []string{"--full"}, nil
+	case "section":
+		names := jwgl.ProfileSectionNames()
+		choices := make([]promptChoice, 0, len(names))
+		labels := map[string]string{
+			jwgl.ProfileSectionPrimaryMajor:    "主修专业",
+			jwgl.ProfileSectionSecondaryMajor:  "辅修专业",
+			jwgl.ProfileSectionUnassignedMajor: "微专业",
+			jwgl.ProfileSectionExamLevels:      "等级考试",
+			jwgl.ProfileSectionFamily:          "家庭成员",
+			jwgl.ProfileSectionRecords:         "学习经历",
+			jwgl.ProfileSectionAcademicYears:   "学年鉴定",
+			jwgl.ProfileSectionClasses:         "班级信息",
+			jwgl.ProfileSectionSelectedCourses: "已选课程",
+			jwgl.ProfileSectionSelectionStatus: "选课状态",
+		}
+		for _, name := range names {
+			choices = append(choices, promptChoice{Label: labels[name], Value: name})
+		}
+		section, err := PromptSelect(app, "选择个人信息子页签", choices, 0)
+		if err != nil {
+			return nil, err
+		}
+		return []string{"--section", section}, nil
+	default:
+		return nil, nil
+	}
+}
+
 func interactiveScoresArgs(ctx context.Context, app *App) ([]string, error) {
 	args, err := interactiveTermArgs(ctx, app)
 	if err != nil {
@@ -271,6 +327,20 @@ func interactiveScoresArgs(ctx context.Context, app *App) ([]string, error) {
 	}
 	if nature != "" {
 		args = append(args, "--kcxzdm", nature)
+	}
+	view, err := PromptSelect(app, "成绩视图", []promptChoice{
+		{Label: "成绩列表", Value: "summary"},
+		{Label: "单门成绩分项", Value: "detail"},
+		{Label: "成绩分项模板", Value: "templates"},
+	}, 0)
+	if err != nil {
+		return nil, err
+	}
+	switch view {
+	case "detail":
+		args = append(args, "--detail")
+	case "templates":
+		args = append(args, "--templates")
 	}
 	return args, nil
 }

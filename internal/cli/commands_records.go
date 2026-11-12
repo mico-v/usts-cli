@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/mico-v/usts-cli/internal/application"
 	"github.com/mico-v/usts-cli/internal/domain"
@@ -95,6 +97,52 @@ func selectScoreForDetail(items []domain.ScoreItem, opts *scoresOptions) (domain
 	return domain.ScoreItem{}, domain.ConfigError("成绩分项筛选不唯一")
 }
 
+func selectScoreForDetailInteractive(app *App, items []domain.ScoreItem, opts *scoresOptions) (domain.ScoreItem, error) {
+	selected, err := selectScoreForDetail(items, opts)
+	if err == nil || opts.JSON || app == nil || !app.InTTY || app.In == nil || app.Out == nil {
+		return selected, err
+	}
+	matches := make([]domain.ScoreItem, 0)
+	for _, item := range items {
+		if opts.JXBID != "" && (item.TeachingClassID == nil || *item.TeachingClassID != opts.JXBID) {
+			continue
+		}
+		if opts.CourseCode != "" && item.CourseCode != opts.CourseCode {
+			continue
+		}
+		matches = append(matches, item)
+	}
+	if len(matches) == 0 {
+		return domain.ScoreItem{}, err
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	choices := make([]promptChoice, 0, len(matches))
+	for index, item := range matches {
+		parts := []string{item.CourseName}
+		if item.CourseCode != "" {
+			parts = append(parts, item.CourseCode)
+		}
+		if item.TeachingClass != "" {
+			parts = append(parts, item.TeachingClass)
+		}
+		choices = append(choices, promptChoice{
+			Label: strings.Join(parts, " · "),
+			Value: strconv.Itoa(index),
+		})
+	}
+	value, promptErr := PromptSelect(app, "选择要查看分项的成绩", choices, 0)
+	if promptErr != nil {
+		return domain.ScoreItem{}, promptErr
+	}
+	index, parseErr := strconv.Atoi(value)
+	if parseErr != nil || index < 0 || index >= len(matches) {
+		return domain.ScoreItem{}, domain.ConfigError("成绩分项选择无效")
+	}
+	return matches[index], nil
+}
+
 func bindAcademia(fs *flag.FlagSet, options any) {
 	fs.StringVar(&options.(*academiaOptions).Category, "category", "", "拉取指定分类的课程明细")
 }
@@ -134,7 +182,7 @@ func runScores(ctx context.Context, app *App, options any) error {
 		return err
 	}
 	if opts.Detail {
-		selected, err := selectScoreForDetail(view.Items, opts)
+		selected, err := selectScoreForDetailInteractive(app, view.Items, opts)
 		if err != nil {
 			return err
 		}
@@ -316,13 +364,6 @@ func runSelectedCourses(ctx context.Context, app *App, options any) error {
 	if err != nil {
 		return err
 	}
-	if err := app.EnsureSession(ctx); err != nil {
-		return err
-	}
-	items, err := app.Client.QuerySelectedCourses(ctx, term.AcademicYear, term.Semester)
-	if err != nil {
-		return err
-	}
 	viewFlags := 0
 	for _, enabled := range []bool{opts.Blocks, opts.Chosen, opts.Credits, opts.EvaluationStatus} {
 		if enabled {
@@ -332,8 +373,21 @@ func runSelectedCourses(ctx context.Context, app *App, options any) error {
 	if viewFlags > 1 {
 		return domain.ConfigError("--blocks / --chosen / --credits / --evaluation-status 只能选择一个")
 	}
+	if viewFlags == 0 && (opts.CategoryCode != "" || opts.BlockID != "") {
+		return domain.ConfigError("--category-code / --block-id 只能和 --blocks、--chosen、--credits 或 --evaluation-status 一起使用")
+	}
+	if err := app.EnsureSession(ctx); err != nil {
+		return err
+	}
+	items, err := app.Client.QuerySelectedCourses(ctx, term.AcademicYear, term.Semester)
+	if err != nil {
+		return err
+	}
 	if viewFlags == 1 {
 		categoryCode, blockID, err := resolveSelectedContext(items, opts.CategoryCode, opts.BlockID)
+		if err != nil && !opts.JSON {
+			categoryCode, blockID, err = resolveSelectedContextInteractive(app, items, opts.CategoryCode, opts.BlockID)
+		}
 		if err != nil {
 			return err
 		}
@@ -416,6 +470,70 @@ func resolveSelectedContext(
 		return "", "", domain.ConfigError("没有匹配的选课板块上下文；请用 --category-code 和 --block-id 指定")
 	}
 	return "", "", domain.ConfigError("匹配到多个选课板块上下文；请用 --category-code 和 --block-id 指定")
+}
+
+func resolveSelectedContextInteractive(
+	app *App,
+	items []domain.SelectedCourseItem,
+	categoryCode, blockID string,
+) (string, string, error) {
+	originalErr := func() error {
+		_, _, err := resolveSelectedContext(items, categoryCode, blockID)
+		return err
+	}()
+	if app == nil || !app.InTTY || app.In == nil || app.Out == nil {
+		return "", "", originalErr
+	}
+	type contextValue struct {
+		category string
+		block    string
+		label    string
+	}
+	seen := map[string]bool{}
+	contexts := make([]contextValue, 0)
+	for _, item := range items {
+		category := stringValue(item.CategoryCode, "")
+		block := stringValue(item.SelectionBlockID, "")
+		if category == "" || block == "" ||
+			(categoryCode != "" && category != categoryCode) ||
+			(blockID != "" && block != blockID) {
+			continue
+		}
+		key := category + "\x00" + block
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		parts := []string{category}
+		if categoryName := stringValue(item.Category, ""); categoryName != "" {
+			parts = append(parts, categoryName)
+		}
+		parts = append(parts, "板块 "+block)
+		contexts = append(contexts, contextValue{
+			category: category,
+			block:    block,
+			label:    strings.Join(parts, " · "),
+		})
+	}
+	if len(contexts) == 0 {
+		return "", "", originalErr
+	}
+	if len(contexts) == 1 {
+		return contexts[0].category, contexts[0].block, nil
+	}
+	choices := make([]promptChoice, 0, len(contexts))
+	for index, context := range contexts {
+		choices = append(choices, promptChoice{Label: context.label, Value: strconv.Itoa(index)})
+	}
+	value, err := PromptSelect(app, "选择选课板块上下文", choices, 0)
+	if err != nil {
+		return "", "", err
+	}
+	index, err := strconv.Atoi(value)
+	if err != nil || index < 0 || index >= len(contexts) {
+		return "", "", domain.ConfigError("选课板块上下文选择无效")
+	}
+	return contexts[index].category, contexts[index].block, nil
 }
 
 func runWarning(ctx context.Context, app *App, options any) error {
